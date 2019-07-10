@@ -56,6 +56,7 @@ while True:
     print(msg)
 
     print("Executing task...")
-    result = exec("time.sleep(3)")
+    result = exec(msg)
+    time.sleep(2)
     print(result)
     task_type = "TASK_RETURN"
