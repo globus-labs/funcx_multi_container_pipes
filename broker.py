@@ -3,6 +3,8 @@ import zmq
 import pickle
 
 
+# TODO: Look in funcX worker for wrapping/unwrapping.
+
 class Worker(object):
     """a Worker, idle or active"""
     identity = None  # hex Identity of worker
@@ -22,22 +24,34 @@ class Broker(object):
         self.workers = {}  # k-v == worker_id + resource reqs.
 
         self.context = zmq.Context()
-        self.socket = self.context.socket(zmq.ROUTER)
-        self.socket.linger = 0
+        self.worker_socket = self.context.socket(zmq.ROUTER)
+        self.worker_socket.linger = 0
         self.poller = zmq.Poller()
-        self.poller.register(self.socket, zmq.POLLIN)
+        self.poller.register(self.worker_socket, zmq.POLLIN)
         self.brokers = {}
+
+        self.client_socket = self.context.socket(zmq.REP)
+        self.poller.register(self.client_socket, zmq.POLLIN)
+
+    def connect_to_client(self):
+        print("Hey")
+        return "Sausage"
+
+    def connect_to_worker(self):
+        print("Hey2")
+        return "Pepperoni"
 
 
 broker = Broker()
-broker.socket.bind("tcp://*:50001")
+broker.worker_socket.bind("tcp://*:50001")
+broker.client_socket.bind("tcp://*:50005")
 
-tasks = []
+
+tasks = ["hello", "rello", "yello", "mello"]
 
 
 poll_workers = zmq.Poller()
-poll_workers.register(broker.socket, zmq.POLLIN)
-
+poll_workers.register(broker.worker_socket, zmq.POLLIN)
 
 while True:
 
@@ -45,15 +59,20 @@ while True:
 
     # Poll and get worker_id and result
     result = broker.poller.poll()
+    #req = broker.poller.poll()
 
     if result:
         print("Received result! ")
-        msg = broker.socket.recv_multipart()
+        msg = broker.worker_socket.recv_multipart()
 
         result = pickle.loads(msg[1])
         command = pickle.loads(msg[2])
 
+        print(result)
+        print(command)
+
         # On registration, create worker and add to worker dicts.
+        # TODO: Can move this part out to the manager level.
         if command == "REGISTER":
             broker.workers[result["wid"]] = {
              "con_id": result["con_id"],
@@ -69,18 +88,13 @@ while True:
             else:
                 broker.worker_types["w_type"] = [result["wid"]]
 
-    #### CONSTRUCTION ZONE ####
-    # TODO: This isn't actually receiving back any message.
-    print("Sending back to worker")
-    broker.socket.send_multipart([pickle.dumps("hello")])
-    print("Successfully sent!")
-    ###########################
+            print("Successfully registered worker! ")
 
-        # elif command == "TASK":
-        #     for task in tasks:
-        #         broker.socket.send_multipart(broker.workers)
+        # Catch returned tasks and return them to the client.
+        elif command == "TASK_RETURN":  # TODO: Uncomment this when rigged to client.
+            print("TASK TO RETURN.")
 
-        # else:
-        #     print("ERROR~!!!")
+        for task in tasks:  # TODO: Receive 'tasks' (as batch) from the client.
+            broker.worker_socket.send_multipart([b"A", task.encode()])  # TODO: Should THIS be async?
 
-        # print(broker.workers)
+
