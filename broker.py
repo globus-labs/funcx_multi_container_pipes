@@ -1,11 +1,10 @@
 
 import zmq
 import pickle
-
 import time
 
-# TODO: Look in funcX worker for wrapping/unwrapping.
 
+# TYLER: Look in funcX worker for wrapping/unwrapping.
 class Worker(object):
     """a Worker, idle or active"""
     identity = None  # hex Identity of worker
@@ -48,23 +47,21 @@ broker.worker_socket.bind("tcp://*:50001")
 broker.client_socket.bind("tcp://*:50002")
 
 
-tasks = ["print('hello')", "print('mello')", "print('rello')", "print('yello')", "print('kello')"]
-#results = queue.Queue()
+b_tasks = []
+results = []
 
-
-#poll_workers = zmq.Poller()
 broker.poller.register(broker.client_socket, zmq.POLLIN)
 
 while True:
 
     print("Getting new result")
-
     # Poll and get worker_id and result
     result = broker.poller.poll()
 
     worker_msg = None
     client_msg = None
 
+    print("Pulling messages from worker...")
     try:
         worker_msg = broker.worker_socket.recv_multipart(flags=zmq.NOBLOCK)
         worker_result = pickle.loads(worker_msg[1])
@@ -73,10 +70,17 @@ while True:
         print("No worker messages")
         pass
 
+    print("Pulling messages from client...")
     try:
         client_msg = broker.client_socket.recv_multipart(flags=zmq.NOBLOCK)
-        client_result = pickle.loads(client_msg[1])
-        client_command = pickle.loads(client_msg[2])
+        print(client_msg)
+        task_id = pickle.loads(client_msg[1])
+        client_tasks = pickle.loads(client_msg[2])
+        client_command = pickle.loads(client_msg[3])
+
+        for task in client_tasks:
+            b_tasks.append(task)
+
     except zmq.ZMQError:
         print("No client messages")
         pass
@@ -84,8 +88,9 @@ while True:
     # If we have a message from worker, process it.
     if worker_msg is not None:
 
-        worker_result = pickle.loads(worker_msg[1])
-        worker_command = pickle.loads(worker_msg[2])
+        task_id = pickle.loads(worker_msg[1])
+        worker_result = pickle.loads(worker_msg[2])
+        worker_command = pickle.loads(worker_msg[3])
 
         # On registration, create worker and add to worker dicts.
         if worker_command == "REGISTER":
@@ -105,21 +110,39 @@ while True:
 
             print("Successfully registered worker! ")
 
+        elif worker_command == "TASK_RETURN":
 
-        #
-        # # Catch returned tasks and return them to the client.
-        # elif command == "TASK_RETURN":  # TODO: Uncomment this when rigged to client.
-        #     print("TASK TO RETURN.")
-        #
-        if worker_command == "TASK_RETURN":
-            print("RETURNING!")
+            print("GIVE EM BACK")
+            # Receive from the worker.
+            try:
+                # worker_result = broker.worker_socket.recv_multipart(flags=zmq.NOBLOCK)
+                print("RESULT RECEIVED")
+                results.append(worker_result)
+                print("RESULTS: {}".format(results))
+            except zmq.ZMQError:
+                print("Nothing to task_return.")
+                pass
 
-        if tasks is not None:
-            for task in tasks:  # TODO: Receive 'tasks' (as batch) from the client.
-                broker.worker_socket.send_multipart([b"A", task.encode()])  # TODO: Should THIS be async?async
+    if client_msg is not None:
+        print("SENDING TASKS TO WORKER!")
+        if len(b_tasks) > 0:
+            print(b_tasks)
+            for task in b_tasks:
+                broker.worker_socket.send_multipart([b"A", task.encode()])
+                print(task)
+        else:
+            print("NO TASKS")
 
-    print("MADE IT HERE.")
+    print("SENDING BACK RESULTS")
+    if len(results) is not None:
+        # Send to the client
+        print("RESULTS LENGTH: {}".format(len(results)))
+        for result in results:
+            result.insert(0, b"B")
+            print(result)
+            broker.client_socket.send_multipart(result)
+    else:
+        print("NO RESULTS")
 
-    print(len(broker.workers))
-
+    # TODO: Send a bunch of zmq.NOBLOCK results back to client.
     time.sleep(0.5)
