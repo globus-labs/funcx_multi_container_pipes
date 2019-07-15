@@ -4,6 +4,11 @@ import pickle
 import time
 
 
+# TODO 1: Support having multiple container types connected simultaneously.
+# TODO 2: Spin up containers automatically using subprocess (like process worker pool).
+# TODO 3: Use actual containers with the workers (if container_reuse or container_single_use).
+# TODO 4: Track resources on the system (can then use this for scheduling purposes).
+
 # TYLER: Look in funcX worker for wrapping/unwrapping.
 class Worker(object):
     """a Worker, idle or active"""
@@ -79,7 +84,7 @@ while True:
         client_command = pickle.loads(client_msg[3])
 
         for task in client_tasks:
-            b_tasks.append(task)
+            b_tasks.append((task_id, task))
 
     except zmq.ZMQError:
         print("No client messages")
@@ -95,10 +100,10 @@ while True:
         # On registration, create worker and add to worker dicts.
         if worker_command == "REGISTER":
             broker.workers[worker_result["wid"]] = {
-                "con_id": worker_result["con_id"],
-                "gpu_avail": worker_result["gpu_avail"],
-                "mem_avail": worker_result["mem_avail"],
-                "data_obj": worker_result["data_obj"],
+                # "con_id": worker_result["con_id"],
+                # "gpu_avail": worker_result["gpu_avail"],
+                # "mem_avail": worker_result["mem_avail"],
+                # "data_obj": worker_result["data_obj"],
                 "last_result": "REGISTER",
                 "w_type": worker_result["w_type"]
             }
@@ -128,7 +133,8 @@ while True:
         if len(b_tasks) > 0:
             print(b_tasks)
             for task in b_tasks:
-                broker.worker_socket.send_multipart([b"A", task.encode()])
+                # Schema: worker_type, task_id, task_buffer (list).
+                broker.worker_socket.send_multipart([b"A", task[0], task[1].encode()])
                 print(task)
         else:
             print("NO TASKS")
@@ -144,5 +150,4 @@ while True:
     else:
         print("NO RESULTS")
 
-    # TODO: Send a bunch of zmq.NOBLOCK results back to client.
     time.sleep(0.5)
