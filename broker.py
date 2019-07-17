@@ -5,9 +5,9 @@ import time
 import random
 import logging
 from queue import Queue
+import subprocess
 
 
-# TODO 1: Support having multiple container types connected simultaneously.
 # TODO 2: Spin up containers automatically using subprocess (like process worker pool).
 # TODO 3: Use actual containers with the workers (if container_reuse or container_single_use).
 # TODO 4: Track resources on the system (can then use this for scheduling purposes).
@@ -52,13 +52,31 @@ class Broker(object):
         self.client_socket = self.context.socket(zmq.ROUTER)
         self.poller.register(self.client_socket, zmq.POLLIN)
 
+        self.sockets_in_use = []
+        self.socket_range = range(50001, 59999)
+
     def connect_to_client(self):
         print("Hey")
         return "Sausage"
 
-    def connect_to_worker(self):
-        print("Hey2")
-        return "Pepperoni"
+
+    # TODO: Actually connect this thing.
+    def connect_to_worker(self, worker_type):
+
+        # Keep trying until we get a non-conflicting socket_address.
+        while True:
+            sock_addr = random.choice()
+            if sock_addr not in self.sockets_in_use:
+                self.sockets_in_use.append(sock_addr)
+                break
+
+        # TODO: Actually create the worker socket here. 
+
+        # Now actually spin it up.
+        cmd = "python3 worker.py -w {} -s {}".format(worker_type, sock_addr)
+        subprocess.Popen(cmd)
+
+        return sock_addr
 
     def create_new_workers(self, w_type):
         port_range = range(50010, 54999)
@@ -113,8 +131,6 @@ while True:
         # for task in client_tasks:
         #     b_tasks.append((task_id, task))
 
-            # {task_typeA: a_queue, task_typeB: b...}
-
     except zmq.ZMQError:
         print("No client messages")
         pass
@@ -162,7 +178,7 @@ while True:
                 # Schema: worker_type, task_id, task_buffer (list).
                 # TODO: un-hardcode the 'A'
                 print(task)
-                task[0] = b"A"
+                task[0] = b"C"
                 broker.worker_socket.send_multipart(task)
                 print(task)
         else:
