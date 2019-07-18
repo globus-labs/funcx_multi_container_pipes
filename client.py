@@ -8,7 +8,7 @@ from ipyparallel.serialize import serialize_object, unpack_apply_message, pack_a
 
 context = zmq.Context()
 broker_socket = context.socket(zmq.DEALER)
-broker_socket.setsockopt(zmq.IDENTITY, "B".encode())
+broker_socket.setsockopt(zmq.IDENTITY, "client-identity".encode())
 
 broker_socket.connect("tcp://localhost:50002")
 

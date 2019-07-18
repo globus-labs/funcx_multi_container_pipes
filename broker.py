@@ -173,26 +173,22 @@ while True:
                 print("Nothing to task_return.")
                 pass
 
-    # TODO: We probably don't need the 'is not None' part??? We want to send tasks regardless.
-    if client_msg is not None:
-        print("SENDING TASKS TO WORKER!")
-        if len(b_tasks) > 0:
-            for task in b_tasks:
-                # Schema: worker_type, task_id, task_buffer (list).
-                # TODO: un-hardcode the 'A'
-                print(task)
-                task[0] = b"C"
-                #broker.worker_socket.send_multipart(task)  # TODO: bring this back
-                print(task)
-        else:
-            print("NO TASKS")
+    print("SENDING TASKS TO WORKER!")
+    if len(b_tasks) > 0:
+        for task in b_tasks:
+            # Schema: worker_type, task_id, task_buffer (list).
+            # TODO: un-hardcode the 'A'
+            print(task)
+            task[0] = b"A"
+            worker_pool.worker_socket.send_multipart(task) 
+            print(task)
 
     print("SENDING BACK RESULTS")
     if len(results) is not None:
         # Send to the client
         print("RESULTS LENGTH: {}".format(len(results)))
         for result in results:
-            result.insert(0, b"B")
+            result.insert(0, b"client-identity")
             print(result)
             client.client_socket.send_multipart(result)
     else:
