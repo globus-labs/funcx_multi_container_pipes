@@ -29,8 +29,30 @@ class Client(object):
         self.client_socket = self.context.socket(zmq.ROUTER)
         self.poller.register(self.client_socket, zmq.POLLIN)
         self.client_socket.bind("tcp://*:50002")
+        self.client_identity = b"client_identity"
 
         print("Client socket successfully created!")
+
+    def results_to_client(self, result):
+        #context = zmq.Context.instance()
+        #client = context.socket(zmq.ROUTER)
+        #client.bind("tcp://*:50002")
+
+        # Thread(target=worker_a).start()
+        # Thread(target=worker_b).start()
+
+        # Wait for threads to stabilize
+        time.sleep(1)
+
+        # Send 10 tasks scattered to A twice as often as B
+        for _ in range(10):
+            # Send two message parts, first the address…
+            ident = random.choice([b'B', b'B', b'B'])
+            # And then the workload
+            work = b"This is the workload"
+            self.client_socket.send_multipart([ident, pickle.dumps(result)])
+
+        self.client_socket.send_multipart([b'B', pickle.dumps(result)])
 
 
 class WorkerPool(object):
@@ -52,20 +74,17 @@ class WorkerPool(object):
         self.sock_addr = 50010
         self.worker_socket.bind("tcp://*:{}".format(self.sock_addr))
 
-
     def create_worker(self, worker_type):
         wid = uuid.uuid4()
 
-
         # Keep trying until we get a non-conflicting socket_address.
-        # while True:
-        #     sock_addr = random.choice(self.socket_range)
-        #     if sock_addr not in self.sockets_in_use:
-        #         self.sockets_in_use.add(sock_addr)
-        #         break
-        #     else:
-        #         print("Conflicting socket... Retry...")
-
+        while True:
+            port_addr = random.choice(self.socket_range)
+            if port_addr not in self.sockets_in_use:
+                self.sockets_in_use.add(port_addr)
+                break
+            else:
+                print("Conflicting socket... Retry...")
 
         # Add to the queues
         if worker_type not in self.worker_types:
@@ -78,7 +97,7 @@ class WorkerPool(object):
 
         # Now actually spin it up.
         # cmd = "python3 worker.py -w {} -s {}".format(worker_type)
-        cmd = "python3 worker.py -w {}".format(worker_type)
+        cmd = "python3 worker.py -w {} -p {} -i {}".format(worker_type, port_addr, wid)
         #subprocess.Popen(cmd, shell=True)
         print("Successfully initialized worker! ")
 
@@ -94,6 +113,9 @@ client = Client(context)
 
 worker_pool = WorkerPool(context)
 
+
+# TODO: We need a task queue for each type of work.
+a_tasks = []
 b_tasks = []
 results = []
 
@@ -111,34 +133,25 @@ while True:
 
     print("Pulling messages from worker...")
     # >>>>>>>>>>>>>>>>>>>>>>>>>>> Construction below this line >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-    #for wid in worker_pool.workers:  #.workers is a socket object
     try:
         worker_msg = worker_pool.worker_socket.recv_multipart(flags=zmq.NOBLOCK)
-        # worker_msg = worker_pool.worker_socket.recv_multipart()
         print(worker_msg)
         worker_result = pickle.loads(worker_msg[1])
         worker_command = pickle.loads(worker_msg[2])
-        #break  # Break if we get a message from one of our sockets
     except zmq.ZMQError:
         print("No worker messages")
         pass
 
-    #print(worker_msg)
-
     print("Pulling messages from client...")
+
+    work_type = b"OOOOOOOOOOPS"
     try:
         client_msg = client.client_socket.recv_multipart(flags=zmq.NOBLOCK)
-        print(client_msg)
-        task_id = pickle.loads(client_msg[1])  # TODO: remove.
-
+        task_id = pickle.loads(client_msg[1])  # TODO: remove -- should parse bits instead.
+        work_type = client_msg[-1]
         b_tasks.append(client_msg)
 
-        # client_tasks = pickle.loads(client_msg[2])
-        # client_command = pickle.loads(client_msg[3])
-
-        # # TODO: Dont' worry about picking apart batches yet.
-        # for task in client_tasks:
-        #     b_tasks.append((task_id, task))
+        print("Work type: {}".format(work_type.decode()))
 
     except zmq.ZMQError:
         print("No client messages")
@@ -162,7 +175,6 @@ while True:
 
         elif worker_command == "TASK_RETURN":
 
-            print("GIVE EM BACK")
             # Receive from the worker.
             try:
                 # worker_result = broker.worker_socket.recv_multipart(flags=zmq.NOBLOCK)
@@ -177,20 +189,19 @@ while True:
     if len(b_tasks) > 0:
         for task in b_tasks:
             # Schema: worker_type, task_id, task_buffer (list).
-            # TODO: un-hardcode the 'A'
-            print(task)
-            task[0] = b"A"
-            worker_pool.worker_socket.send_multipart(task) 
-            print(task)
+            task[0] = work_type
+            worker_pool.worker_socket.send_multipart(task)
 
     print("SENDING BACK RESULTS")
     if len(results) is not None:
         # Send to the client
         print("RESULTS LENGTH: {}".format(len(results)))
         for result in results:
-            result.insert(0, b"client-identity")
+            result.insert(0, client.client_identity)
             print(result)
-            client.client_socket.send_multipart(result)
+            print("SENDING....")
+            client.results_to_client(result)
+            print("MESSAGE SUCCESSFULLY SENT!")
     else:
         print("NO RESULTS")
 
