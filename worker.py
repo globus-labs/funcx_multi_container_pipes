@@ -3,11 +3,14 @@ import zmq
 import uuid
 import pickle
 import argparse
+import logging
 from ipyparallel.serialize import serialize_object, unpack_apply_message, pack_apply_message
 
 
 # Keep this here for test function.
 import time
+
+# logging.basicConfig(filename='example.log', level=logging.DEBUG)
 
 
 class Worker:
@@ -20,18 +23,20 @@ class Worker:
 
         self.service = "foxtrot"
 
-        self.broker_path = "tcp://localhost:50001"
+        # self.broker_path = "tcp://*:50001"
         self.context = zmq.Context()
         self.poller = zmq.Poller()
-        self.identity = identity
+        self.identity = identity.encode()
+
+        print("Identity: ".format(identity))
 
         self.task_socket = self.context.socket(zmq.DEALER)
-        self.task_socket.setsockopt(zmq.IDENTITY, identity)
+        self.task_socket.setsockopt(zmq.IDENTITY, b"A")  # TODO
         print("Connecting to broker socket!")
-        self.task_socket.connect(self.broker_path)
+        self.task_socket.connect("tcp://127.0.0.1:50010")
         self.poller.register(self.task_socket, zmq.POLLIN)
 
-        print("Worker of type {} connected!".format(identity))
+        print("Worker of type {} connected!".format(self.identity))
 
 
 def execute_task(bufs):
@@ -82,6 +87,8 @@ def listen_and_process(result, task_type):
     while True:
         # TODO: Make this line async.
         print("Sending result...")
+        # result = "Potato"
+        # task_type = "tomato"
         worker.task_socket.send_multipart([pickle.dumps(""), pickle.dumps(result), pickle.dumps(task_type)])
         bufs = None
 
@@ -113,14 +120,14 @@ if __name__ == "__main__":
     parser.add_argument('-w', '--worker_type', default='A',
                         help="Worker type definition as string (Default=A)")
 
-    parser.add_argument('-s', '--socket_url', default=50000,
-                        help="Worker type definition as string (Default=A)")
+    # parser.add_argument('-s', '--socket_url', default=50000,
+    #                     help="Worker type definition as string (Default=A)")
 
     args = parser.parse_args()
 
-    worker = Worker(args.worker_type.encode())
+    worker = Worker(args.worker_type)
 
-    result = {"wid": worker.wid,
+    result = {"wid": 'potato',
               "result": "REGISTER",
               "w_type": "A"}
     task_type = "REGISTER"

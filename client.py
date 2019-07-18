@@ -33,7 +33,7 @@ for req in range(1):
     # print(task_id)
     # TODO: Add back container job type sorting.
     # Schema: task_id, task_buffer (list), 'command', 'w_type']
-    broker_socket.send_multipart([pickle.dumps(task_id), pickle.dumps(obj), pickle.dumps("INVOKE"), b'C'])
+    broker_socket.send_multipart([pickle.dumps(task_id), pickle.dumps(obj), pickle.dumps("INVOKE"), b'A'])
 
     while True:
         message = broker_socket.recv_multipart()
