@@ -35,7 +35,7 @@ def add2nums(num1, num2):
     return num1 + num2
 
 
-for req in range(20):
+for req in range(100):
     print("Sending request {}".format(req))
     task_id = str(uuid.uuid4())
 

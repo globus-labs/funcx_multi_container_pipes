@@ -49,7 +49,8 @@ class Client(object):
         time.sleep(1)
 
         # Send 10 tasks scattered to A twice as often as B
-        for _ in range(10):
+        # TODO: THIS RETURNS 10 TIMES!!!
+        for _ in range(1):
             # Send two message parts, first the address…
             ident = random.choice([b'B', b'B', b'B'])
             # And then the workload
@@ -104,14 +105,66 @@ class WorkerPool(object):
 
         return wid
 
+    def recv_client_message(self, cli):
+        try:
+            client_msg = cli.client_socket.recv_multipart(flags=zmq.NOBLOCK)
+            task_id = pickle.loads(client_msg[1])  # TODO: remove -- should parse bits instead.
+            work_type = client_msg[-1]
+
+            pri_queue = self.worker_types[work_type]
+
+            pri_queue.put(PrioritizedItem(5, client_msg))
+            print("Priority Queue size: {}".format(pri_queue.qsize()))
+
+            print("Work type: {}".format(work_type.decode()))
+
+        except zmq.ZMQError:
+            print("No client messages")
+            pass
+
+    def send_results_to_client(self, cli, res_q):
+        while not results.empty():
+
+            result = res_q.get()
+            result.insert(0, cli.client_identity)
+            print(result)
+            print("SENDING....")
+            cli.results_to_client(result)
+            print("MESSAGE SUCCESSFULLY SENT!")
+        print("ALL CURRENT RESULTS RETURNED. ")
+
+    def populate_results(self):
+        worker_task_type = worker_msg[4]  # Parse out the worker_type.
+        print("WORK TYPE: {}".format(worker_task_type))
+
+        self.work_capacities[worker_task_type.decode()] += 1  # Add 1 back to the capacity.
+
+        # Receive from the worker.
+        try:
+            # worker_result = broker.worker_socket.recv_multipart(flags=zmq.NOBLOCK)
+            print("RESULT RECEIVED")
+            results.put(worker_result)
+            print("RESULTS: {}".format(results))
+        except zmq.ZMQError:
+            print("Nothing to task_return.")
+            pass
+
+    def register_worker(self, reg_message):
+        # Set our initial capacity to 1, meaning we're ready for a task.
+        if reg_message["w_type"] in self.work_capacities:
+            self.work_capacities[reg_message["w_type"]] += 1
+        else:
+            self.work_capacities[reg_message["w_type"]] = 5
+
+        print("Successfully registered worker! ")
+
+    def send_results_to_worker(self):
+        print("HEY")
+
     def kill_worker(self, identity):
         # TODO: Find the worker with the lowest queue
         # TODO: Wrap up this stuff.
         print("KILL")
-
-    def select_new_task(self, worker_type):
-        # Access the appropriate task queue.
-        return self.worker_types[worker_type].pop()
 
 
 context = ZMQContext()
@@ -121,7 +174,6 @@ client = Client(context)
 
 worker_pool = WorkerPool(context)
 
-# TODO: We need a task queue for each type of work.
 
 results = queue.Queue()
 
@@ -151,22 +203,9 @@ while True:
     print("Pulling messages from client...")
 
     work_type = b"*******"
-    try:
-        client_msg = client.client_socket.recv_multipart(flags=zmq.NOBLOCK)
-        task_id = pickle.loads(client_msg[1])  # TODO: remove -- should parse bits instead.
-        work_type = client_msg[-1]
 
-        # TODO: Append the task to an appropriate queue
-        pri_queue = worker_pool.worker_types[work_type]
-
-        worker_pool.worker_types[work_type].put(PrioritizedItem(5, client_msg))
-        print(worker_pool.worker_types[work_type].qsize())
-
-        print("Work type: {}".format(work_type.decode()))
-
-    except zmq.ZMQError:
-        print("No client messages")
-        pass
+    # Check to see if client message exists and add to appropriate queues.
+    worker_pool.recv_client_message(client)
 
     # If we have a message from worker, process it.
     if worker_msg is not None:
@@ -179,48 +218,20 @@ while True:
 
         # On registration, create worker and add to worker dicts.
         if worker_command == "REGISTER":
-
-            print(worker_result)
-
-            # Set our initial capacity to 1, meaning we're ready for a task.
-            if worker_result["w_type"] in worker_pool.work_capacities:
-                worker_pool.work_capacities[worker_result["w_type"]] += 1
-            else:
-                worker_pool.work_capacities[worker_result["w_type"]] = 1
-
-            print("Successfully registered worker! ")
+            worker_pool.register_worker(reg_message=worker_result)
 
         elif worker_command == "TASK_RETURN":
+            worker_pool.send_results_to_client(client, results)
 
-            # TODO: Try this when there's two workers and lots of work.
-            worker_task_type = worker_msg[4]  # Parse out the worker_type.
-            print("WORK TYPE: {}".format(worker_task_type))
+        else:
+            raise NameError("[funcX] Unknown command type.")
 
-            worker_pool.work_capacities[worker_task_type.decode()] += 1  # Add 1 back to the capacity.
 
-            # Receive from the worker.
-            try:
-                # worker_result = broker.worker_socket.recv_multipart(flags=zmq.NOBLOCK)
-                print("RESULT RECEIVED")
-                results.put(worker_result)
-                print("RESULTS: {}".format(results))
-            except zmq.ZMQError:
-                print("Nothing to task_return.")
-                pass
-
-    print("SENDING TASKS TO WORKER!")
-
-    # TODO: Change how we access these.
-    # if len(b_tasks) > 0:
-    #     for task in b_tasks:
-    #         # Schema: worker_type, task_id, task_buffer (list).
-    #         task[0] = work_type
-    #         worker_pool.worker_socket.send_multipart(task)
-
-    # TODO: Iterate over all worker available-capacities (n).
-
-    print("IN THE CAPACITY LOOP")
     print(worker_pool.work_capacities)
+
+    # TODO: SWITCH entire model to hand task to individual works instead
+    #           (FIFO workers' work_request queue -- rather than capacity?)
+
     for work_type in worker_pool.work_capacities:
         print("Available worker capacity for {}: {}".format(work_type, worker_pool.work_capacities[work_type]))
         for _ in range(worker_pool.work_capacities[work_type]):  # Get one message for each available capacity.
@@ -240,18 +251,6 @@ while True:
                 worker_pool.work_capacities[work_type] -= 1
 
     print("SENDING BACK RESULTS")
-    while not results.empty():
-
-        result = results.get()
-        # # Send to the client
-        # print("RESULTS LENGTH: {}".format(len(results)))
-        #for result in results:
-        result.insert(0, client.client_identity)
-        print(result)
-        print("SENDING....")
-        client.results_to_client(result)
-        print("MESSAGE SUCCESSFULLY SENT!")
-    else:
-        print("NO RESULTS")
+    worker_pool.send_results_to_client(client, results)
 
     time.sleep(0.5)
