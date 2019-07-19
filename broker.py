@@ -4,7 +4,7 @@ import pickle
 import time
 import random
 import logging
-from queue import Queue
+from queue import PriorityQueue
 import subprocess
 import uuid
 
@@ -14,6 +14,14 @@ import uuid
 # TODO 4: Track resources on the system (can then use this for scheduling purposes).
 
 # TODO: think of all workers as waiting for either WORK or KILL.
+
+from dataclasses import dataclass, field
+from typing import Any
+
+@dataclass(order=True)
+class PrioritizedItem:
+    priority: int
+    item: Any=field(compare=False)
 
 
 class ZMQContext(object):
@@ -88,7 +96,7 @@ class WorkerPool(object):
 
         # Add to the queues
         if worker_type not in self.worker_types:
-            self.worker_types[worker_type] = Queue()  # Create queue if there isn't already one for this worker type.
+            self.worker_types[worker_type] = PriorityQueue()  # Create queue if there isn't already one for this worker type.
 
         #self.workers[wid] = worker_socket
         self.worker_capacities[wid] = 0
@@ -102,6 +110,12 @@ class WorkerPool(object):
         print("Successfully initialized worker! ")
 
         return wid
+
+
+    def kill_worker(self, identity):
+        # TODO: Find the worker with the lowest queue
+        # TODO: Wrap up this stuff.
+        print("KILL")
 
 
 context = ZMQContext()
