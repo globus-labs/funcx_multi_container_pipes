@@ -175,6 +175,7 @@ while True:
         task_id = pickle.loads(worker_msg[1])
         worker_result = pickle.loads(worker_msg[2])
         worker_command = pickle.loads(worker_msg[3])
+        task_type = worker_msg[4]
 
         # On registration, create worker and add to worker dicts.
         if worker_command == "REGISTER":
@@ -190,7 +191,12 @@ while True:
             print("Successfully registered worker! ")
 
         elif worker_command == "TASK_RETURN":
-            # TODO: Also adjust the capacity of each worker to +1.  FREAKIN DO THIS, TYLER.
+
+            # TODO: Try this when there's two workers and lots of work.
+            worker_task_type = worker_msg[4]  # Parse out the worker_type.
+            print("WORK TYPE: {}".format(worker_task_type))
+
+            worker_pool.work_capacities[worker_task_type.decode()] += 1  # Add 1 back to the capacity.
 
             # Receive from the worker.
             try:

@@ -82,13 +82,15 @@ def execute_task(bufs):
         return user_ns.get(resultname)
 
 
-def listen_and_process(result, task_type):
+def listen_and_process(result, task_type, worker_type):
     print("Registering worker with broker...")
     while True:
-        # TODO: Make this line async.
-        print("Sending result...")
 
-        worker.task_socket.send_multipart([pickle.dumps(""), pickle.dumps(result), pickle.dumps(task_type)])
+        if type(worker_type) is not bytes:
+            worker_type = worker_type.encode()
+
+        print("Sending result...")
+        worker.task_socket.send_multipart([pickle.dumps(""), pickle.dumps(result), pickle.dumps(task_type), worker_type])
         bufs = None
         task_id = None
 
@@ -97,13 +99,18 @@ def listen_and_process(result, task_type):
         task_id = msg[0]
         bufs = pickle.loads(msg[1])
 
+        # TODO: Return this.
+        worker_type = msg[3]
+        #
+        print("WORKER TYPE {}".format(worker_type))
+
         print("Executing task...")
         exec_result = execute_task(bufs)
 
         print("Executed result: {}".format(exec_result))
 
         # TODO: Should this be pack_apply_object or serialize_object to match IX?
-        result = [pickle.dumps(task_id), exec_result.encode(), pickle.dumps("TASK_RETURN")]
+        result = [pickle.dumps(task_id), exec_result.encode(), pickle.dumps("TASK_RETURN"), worker_type]
         time.sleep(2)
         print(result)
         task_type = "TASK_RETURN"
@@ -131,4 +138,4 @@ if __name__ == "__main__":
               "w_type": args.worker_type}
     task_type = "REGISTER"
 
-    listen_and_process(result, task_type)
+    listen_and_process(result, task_type, args.worker_type)

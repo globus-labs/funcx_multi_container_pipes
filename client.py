@@ -46,13 +46,9 @@ for req in range(20):
     worker.send_multipart([pickle.dumps(task_id), pickle.dumps(obj), pickle.dumps("INVOKE"), b'B'])
 
 
-
 total = 0
 while True:
     # We receive one part, with the workload
     request = worker.recv()
     print(request)
-    break
-
-
-# worker_b()
+    #break
