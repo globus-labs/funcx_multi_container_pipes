@@ -28,7 +28,7 @@ from ipyparallel.serialize import serialize_object, unpack_apply_message, pack_a
 context = zmq.Context()
 worker = context.socket(zmq.DEALER)
 worker.setsockopt(zmq.IDENTITY, b'B')
-worker.connect("tcp://127.0.0.1:50002")
+worker.connect("tcp://127.0.0.1:50052")
 
 
 def add2nums(num1, num2):

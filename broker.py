@@ -5,6 +5,7 @@ import time
 import random
 import logging
 from queue import PriorityQueue
+import queue
 import subprocess
 import uuid
 
@@ -18,10 +19,11 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+
 @dataclass(order=True)
 class PrioritizedItem:
     priority: int
-    item: Any=field(compare=False)
+    item: Any = field(compare=False)
 
 
 class ZMQContext(object):
@@ -36,18 +38,12 @@ class Client(object):
         self.poller = z_context.poller
         self.client_socket = self.context.socket(zmq.ROUTER)
         self.poller.register(self.client_socket, zmq.POLLIN)
-        self.client_socket.bind("tcp://*:50002")
+        self.client_socket.bind("tcp://*:50052")
         self.client_identity = b"client_identity"
 
         print("Client socket successfully created!")
 
     def results_to_client(self, result):
-        #context = zmq.Context.instance()
-        #client = context.socket(zmq.ROUTER)
-        #client.bind("tcp://*:50002")
-
-        # Thread(target=worker_a).start()
-        # Thread(target=worker_b).start()
 
         # Wait for threads to stabilize
         time.sleep(1)
@@ -66,9 +62,9 @@ class Client(object):
 class WorkerPool(object):
 
     def __init__(self, z_context):
-        self.worker_types = {}  # k-v: work_type - task_q
+        self.worker_types = {b'A': PriorityQueue(), b'B': PriorityQueue()}  # k-v: work_type - task_q (PriorityQueue)
         self.workers = {}  # k-v: worker_id - socket (ZMQ object)
-        self.worker_capacities = {}  # k-v: worker_id - capacity (usually 0 or 1)
+        self.work_capacities = {}  # k-v: work_type - capacity (integer)
 
         # Do all the ZMQ stuff
         self.context = z_context.context
@@ -96,12 +92,9 @@ class WorkerPool(object):
 
         # Add to the queues
         if worker_type not in self.worker_types:
-            self.worker_types[worker_type] = PriorityQueue()  # Create queue if there isn't already one for this worker type.
-
-        #self.workers[wid] = worker_socket
-        self.worker_capacities[wid] = 0
-
-        # print("Successfully bound to worker socket at address {}".format(sock_addr))
+            self.worker_types[worker_type] = PriorityQueue()  # Create queue if not one for this worker type.
+        if worker_type not in self.work_capacities:
+            self.work_capacities[worker_type] = 0
 
         # Now actually spin it up.
         # cmd = "python3 worker.py -w {} -s {}".format(worker_type)
@@ -111,11 +104,14 @@ class WorkerPool(object):
 
         return wid
 
-
     def kill_worker(self, identity):
         # TODO: Find the worker with the lowest queue
         # TODO: Wrap up this stuff.
         print("KILL")
+
+    def select_new_task(self, worker_type):
+        # Access the appropriate task queue.
+        return self.worker_types[worker_type].pop()
 
 
 context = ZMQContext()
@@ -123,15 +119,11 @@ context = ZMQContext()
 print("Creating client...")
 client = Client(context)
 
-# broker.worker_socket.bind("tcp://*:50001")
-
 worker_pool = WorkerPool(context)
 
-
 # TODO: We need a task queue for each type of work.
-a_tasks = []
-b_tasks = []
-results = []
+
+results = queue.Queue()
 
 # worker_pool.create_worker('tabular-ext')
 
@@ -158,12 +150,17 @@ while True:
 
     print("Pulling messages from client...")
 
-    work_type = b"OOOOOOOOOOPS"
+    work_type = b"*******"
     try:
         client_msg = client.client_socket.recv_multipart(flags=zmq.NOBLOCK)
         task_id = pickle.loads(client_msg[1])  # TODO: remove -- should parse bits instead.
         work_type = client_msg[-1]
-        b_tasks.append(client_msg)
+
+        # TODO: Append the task to an appropriate queue
+        pri_queue = worker_pool.worker_types[work_type]
+
+        worker_pool.worker_types[work_type].put(PrioritizedItem(5, client_msg))
+        print(worker_pool.worker_types[work_type].qsize())
 
         print("Work type: {}".format(work_type.decode()))
 
@@ -182,40 +179,72 @@ while True:
         # On registration, create worker and add to worker dicts.
         if worker_command == "REGISTER":
 
+            print(worker_result)
+
             # Set our initial capacity to 1, meaning we're ready for a task.
-            worker_pool.worker_capacities[worker_result["wid"]] = 1
+            if worker_result["w_type"] in worker_pool.work_capacities:
+                worker_pool.work_capacities[worker_result["w_type"]] += 1
+            else:
+                worker_pool.work_capacities[worker_result["w_type"]] = 1
 
             print("Successfully registered worker! ")
 
         elif worker_command == "TASK_RETURN":
+            # TODO: Also adjust the capacity of each worker to +1.  FREAKIN DO THIS, TYLER.
 
             # Receive from the worker.
             try:
                 # worker_result = broker.worker_socket.recv_multipart(flags=zmq.NOBLOCK)
                 print("RESULT RECEIVED")
-                results.append(worker_result)
+                results.put(worker_result)
                 print("RESULTS: {}".format(results))
             except zmq.ZMQError:
                 print("Nothing to task_return.")
                 pass
 
     print("SENDING TASKS TO WORKER!")
-    if len(b_tasks) > 0:
-        for task in b_tasks:
-            # Schema: worker_type, task_id, task_buffer (list).
-            task[0] = work_type
-            worker_pool.worker_socket.send_multipart(task)
+
+    # TODO: Change how we access these.
+    # if len(b_tasks) > 0:
+    #     for task in b_tasks:
+    #         # Schema: worker_type, task_id, task_buffer (list).
+    #         task[0] = work_type
+    #         worker_pool.worker_socket.send_multipart(task)
+
+    # TODO: Iterate over all worker available-capacities (n).
+
+    print("IN THE CAPACITY LOOP")
+    print(worker_pool.work_capacities)
+    for work_type in worker_pool.work_capacities:
+        print("Available worker capacity for {}: {}".format(work_type, worker_pool.work_capacities[work_type]))
+        for _ in range(worker_pool.work_capacities[work_type]):  # Get one message for each available capacity.
+
+            print(worker_pool.worker_types[work_type.encode()].qsize())
+            job_data = None
+
+            if worker_pool.worker_types[work_type.encode()].qsize() > 0:
+                job_data = worker_pool.worker_types[work_type.encode()].get()
+            print("JOB DATA: {}".format(job_data))
+
+            print(job_data)
+            if job_data is not None:
+                print("INSIDE JOB_DATA")
+                job_data.item[0] = work_type.encode()
+                worker_pool.worker_socket.send_multipart(job_data.item)
+                worker_pool.work_capacities[work_type] -= 1
 
     print("SENDING BACK RESULTS")
-    if len(results) is not None:
-        # Send to the client
-        print("RESULTS LENGTH: {}".format(len(results)))
-        for result in results:
-            result.insert(0, client.client_identity)
-            print(result)
-            print("SENDING....")
-            client.results_to_client(result)
-            print("MESSAGE SUCCESSFULLY SENT!")
+    while not results.empty():
+
+        result = results.get()
+        # # Send to the client
+        # print("RESULTS LENGTH: {}".format(len(results)))
+        #for result in results:
+        result.insert(0, client.client_identity)
+        print(result)
+        print("SENDING....")
+        client.results_to_client(result)
+        print("MESSAGE SUCCESSFULLY SENT!")
     else:
         print("NO RESULTS")
 
