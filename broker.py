@@ -16,6 +16,9 @@ import uuid
 
 # TODO: think of all workers as waiting for either WORK or KILL.
 
+# TODO: Killing and starting workers in no_reuse mode should happen back-to-back
+
+
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -48,24 +51,47 @@ class Client(object):
         # Wait for threads to stabilize
         time.sleep(1)
 
-        # Send 10 tasks scattered to A twice as often as B
-        # TODO: THIS RETURNS 10 TIMES!!!
-        for _ in range(1):
-            # Send two message parts, first the address…
-            ident = random.choice([b'B', b'B', b'B'])
-            # And then the workload
-            work = b"This is the workload"
-            self.client_socket.send_multipart([ident, pickle.dumps(result)])
+        ident = b'B'  # TODO. Unhardcode.
+        # And then the workload
 
-        self.client_socket.send_multipart([b'B', pickle.dumps(result)])
+        print(result)
+        print(type(result))
+
+        self.client_socket.send_multipart([ident, pickle.dumps(result)])
+        print("Successfully sent results!")
+
+        self.client_socket.send_multipart([b'B', pickle.dumps(result)])  # TODO: Unhardcode.
+
+
+class Worker(object):
+    def __init__(self, worker_type, port_addr, container_uri=None, container_mode=None):
+        self.capacity = 1
+        self.container_mode = container_mode
+        self.container_uri = container_uri
+        self.port_addr = port_addr
+        self.task_q = queue.Queue()  # This will be the local queue of each worker.
+        self.wid = uuid.uuid4()
+        self.worker_type = worker_type
+
+    def launch(self):
+        print("Doing nothing right now. ")
+        cmd = "python3 worker.py -w {} -p {} -i {}".format(self.worker_type, self.port_addr, self.wid)
+        exit_code = subprocess.Popen(cmd, shell=True)
+        return exit_code
+
+    def kill(self):
+        print("Killing worker")
 
 
 class WorkerPool(object):
 
     def __init__(self, z_context):
-        self.worker_types = {b'A': PriorityQueue(), b'B': PriorityQueue()}  # k-v: work_type - task_q (PriorityQueue)
-        self.workers = {}  # k-v: worker_id - socket (ZMQ object)
-        self.work_capacities = {}  # k-v: work_type - capacity (integer)
+
+        self.task_queues = {b'A': PriorityQueue(), b'B': PriorityQueue()}  # k-v: task_type - task_q (PriorityQueue)
+
+        # TODO: Change this dict to be k-v of worker_id -> worker.
+        self.worker_capacities = {}  # k-v: worker_id - capacity (integer... should only ever be 0 or 1).
+        self.task_to_worker_sets = {}  # k-v: task_type - workers (set)
 
         # Do all the ZMQ stuff
         self.context = z_context.context
@@ -78,9 +104,11 @@ class WorkerPool(object):
         self.poller.register(self.worker_socket, zmq.POLLIN)
         self.sock_addr = 50010
         self.worker_socket.bind("tcp://*:{}".format(self.sock_addr))
+        self.dead_worker_set = set()
 
-    def create_worker(self, worker_type):
-        wid = uuid.uuid4()
+    # TODO: Move much of this to worker class.
+    def create_worker(self, worker_type, container=None):
+        # wid = uuid.uuid4()
 
         # Keep trying until we get a non-conflicting socket_address.
         while True:
@@ -92,18 +120,16 @@ class WorkerPool(object):
                 print("Conflicting socket... Retry...")
 
         # Add to the queues
-        if worker_type not in self.worker_types:
-            self.worker_types[worker_type] = PriorityQueue()  # Create queue if not one for this worker type.
-        if worker_type not in self.work_capacities:
-            self.work_capacities[worker_type] = 0
+        if worker_type not in self.task_queues:
+            self.task_queues[worker_type] = PriorityQueue()  # Create queue if not one for this worker type.
+        if worker_type not in self.worker_capacities:
+            self.worker_capacities[worker_type] = 0
 
         # Now actually spin it up.
         # cmd = "python3 worker.py -w {} -s {}".format(worker_type)
-        cmd = "python3 worker.py -w {} -p {} -i {}".format(worker_type, port_addr, wid)
-        #subprocess.Popen(cmd, shell=True)
-        print("Successfully initialized worker! ")
 
-        return wid
+        print("Successfully initialized worker! ")
+        return "DONE"
 
     def recv_client_message(self, cli):
         try:
@@ -111,7 +137,7 @@ class WorkerPool(object):
             task_id = pickle.loads(client_msg[1])  # TODO: remove -- should parse bits instead.
             work_type = client_msg[-1]
 
-            pri_queue = self.worker_types[work_type]
+            pri_queue = self.task_queues[work_type]
 
             pri_queue.put(PrioritizedItem(5, client_msg))
             print("Priority Queue size: {}".format(pri_queue.qsize()))
@@ -123,25 +149,28 @@ class WorkerPool(object):
             pass
 
     def send_results_to_client(self, cli, res_q):
+
+        print("Checking length of results...")
         while not results.empty():
 
+            print("Length of results is greater than zero!!!")
+
             result = res_q.get()
+            print("RESULT: {}".format(result))
             result.insert(0, cli.client_identity)
-            print(result)
-            print("SENDING....")
+            print("SENDING RESULTS BACK TO CLIENT....")
             cli.results_to_client(result)
             print("MESSAGE SUCCESSFULLY SENT!")
         print("ALL CURRENT RESULTS RETURNED. ")
 
-    def populate_results(self):
-        worker_task_type = worker_msg[4]  # Parse out the worker_type.
+    def populate_results(self, worker_result):
+        worker_task_type = worker_msg[4]  # Parse out the worker_type.  # TODO.
         print("WORK TYPE: {}".format(worker_task_type))
 
-        self.work_capacities[worker_task_type.decode()] += 1  # Add 1 back to the capacity.
+        self.worker_capacities[worker_task_type.decode()] += 1  # Add 1 back to the capacity.
 
         # Receive from the worker.
         try:
-            # worker_result = broker.worker_socket.recv_multipart(flags=zmq.NOBLOCK)
             print("RESULT RECEIVED")
             results.put(worker_result)
             print("RESULTS: {}".format(results))
@@ -151,18 +180,15 @@ class WorkerPool(object):
 
     def register_worker(self, reg_message):
         # Set our initial capacity to 1, meaning we're ready for a task.
-        if reg_message["w_type"] in self.work_capacities:
-            self.work_capacities[reg_message["w_type"]] += 1
+        if reg_message["w_type"] in self.worker_capacities:
+            self.worker_capacities[reg_message["w_type"]] += 1
         else:
-            self.work_capacities[reg_message["w_type"]] = 5
+            self.worker_capacities[reg_message["w_type"]] = 5  # TODO.
 
         print("Successfully registered worker! ")
 
-    def send_results_to_worker(self):
-        print("HEY")
-
     def kill_worker(self, identity):
-        # TODO: Find the worker with the lowest queue
+        # TODO: Append kill message to queue.
         # TODO: Wrap up this stuff.
         print("KILL")
 
@@ -174,15 +200,17 @@ client = Client(context)
 
 worker_pool = WorkerPool(context)
 
-
 results = queue.Queue()
 
-# worker_pool.create_worker('tabular-ext')
+# worker_pool.create_worker('tabular-ext', <CONTAINER_NAME>)
 
+# vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv #
+#        MAIN LOOP BELOW           #
+# vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv #
 
 while True:
-
     print("Getting new result")
+
     # Poll and get worker_id and result
     result = context.poller.poll()
 
@@ -190,7 +218,6 @@ while True:
     client_msg = None
 
     print("Pulling messages from worker...")
-    # >>>>>>>>>>>>>>>>>>>>>>>>>>> Construction below this line >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
     try:
         worker_msg = worker_pool.worker_socket.recv_multipart(flags=zmq.NOBLOCK)
         print(worker_msg)
@@ -221,26 +248,34 @@ while True:
             worker_pool.register_worker(reg_message=worker_result)
 
         elif worker_command == "TASK_RETURN":
+            print("In TASK RETURN: {}".format(worker_result))
+            worker_pool.populate_results(worker_result)
+
+            try:
+                assert(results.qsize() > 0, "EmptyQueueError")
+            except AssertionError:
+                print("QUEUE should be nonempty but is empty!")
+
+            # print("LATEST RESULT: {}".format(results.get()))  #
             worker_pool.send_results_to_client(client, results)
 
         else:
             raise NameError("[funcX] Unknown command type.")
 
-
-    print(worker_pool.work_capacities)
+    print(worker_pool.worker_capacities)
 
     # TODO: SWITCH entire model to hand task to individual works instead
     #           (FIFO workers' work_request queue -- rather than capacity?)
 
-    for work_type in worker_pool.work_capacities:
-        print("Available worker capacity for {}: {}".format(work_type, worker_pool.work_capacities[work_type]))
-        for _ in range(worker_pool.work_capacities[work_type]):  # Get one message for each available capacity.
+    for work_type in worker_pool.worker_capacities:
+        print("Available worker capacity for {}: {}".format(work_type, worker_pool.worker_capacities[work_type]))
+        for _ in range(worker_pool.worker_capacities[work_type]):  # Get one message for each available capacity.
 
-            print(worker_pool.worker_types[work_type.encode()].qsize())
+            print(worker_pool.task_queues[work_type.encode()].qsize())
             job_data = None
 
-            if worker_pool.worker_types[work_type.encode()].qsize() > 0:
-                job_data = worker_pool.worker_types[work_type.encode()].get()
+            if worker_pool.task_queues[work_type.encode()].qsize() > 0:
+                job_data = worker_pool.task_queues[work_type.encode()].get()
             print("JOB DATA: {}".format(job_data))
 
             print(job_data)
@@ -248,9 +283,13 @@ while True:
                 print("INSIDE JOB_DATA")
                 job_data.item[0] = work_type.encode()
                 worker_pool.worker_socket.send_multipart(job_data.item)
-                worker_pool.work_capacities[work_type] -= 1
+                worker_pool.worker_capacities[work_type] -= 1
 
     print("SENDING BACK RESULTS")
     worker_pool.send_results_to_client(client, results)
 
     time.sleep(0.5)
+
+    # TODO: Have a set of killed workers; check the race condition where if you send a kill message to a worker after it has
+    #   requested a task, the queue could look like TASK-KILL-TASK. Check against the set of killed workers;
+    #   if the UUID is in there, then disregard.

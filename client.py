@@ -35,7 +35,7 @@ def add2nums(num1, num2):
     return num1 + num2
 
 
-for req in range(100):
+for req in range(1):
     print("Sending request {}".format(req))
     task_id = str(uuid.uuid4())
 
@@ -48,7 +48,8 @@ for req in range(100):
 
 total = 0
 while True:
+    print("Listening for new result")
     # We receive one part, with the workload
-    request = worker.recv()
+    request = worker.recv_multipart()
     print(request)
-    #break
+    break
