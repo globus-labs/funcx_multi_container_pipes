@@ -4,6 +4,7 @@ import uuid
 import time
 import queue
 import pickle
+import random
 import subprocess
 
 
@@ -50,8 +51,6 @@ class Client(object):
         self.client_socket.send_multipart([self.client_identity, pickle.dumps(res)])
         print("Successfully sent results!")
 
-        # self.client_socket.send_multipart([b'B', pickle.dumps(res)])  # TODO: Unhardcode.
-
 
 class Worker(object):
     def __init__(self, worker_type, port_addr, container_uri=None, container_mode=None):
@@ -86,7 +85,7 @@ class WorkerPool(object):
 
     def __init__(self, z_context):
 
-        self.task_queues = {b'A': PriorityQueue(), b'B': PriorityQueue()}  # k-v: task_type - task_q (PriorityQueue)
+        self.task_queues = {}  # k-v: task_type - task_q (PriorityQueue)
 
         # TODO: Change this dict to be k-v of worker_id -> worker.
         self.worker_capacities = {}  # k-v: worker_id - capacity (integer... should only ever be 0 or 1).
@@ -101,7 +100,16 @@ class WorkerPool(object):
         self.worker_socket = self.context.socket(zmq.ROUTER)
         self.worker_socket.linger = 0
         self.poller.register(self.worker_socket, zmq.POLLIN)
-        self.sock_addr = 50010
+
+        # Keep trying until we get a non-conflicting socket_address.
+        while True:
+            self.sock_addr = random.choice(self.socket_range)
+            if self.sock_addr not in self.sockets_in_use:
+                self.sockets_in_use.add(self.sock_addr)
+                break
+            else:
+                print("Conflicting socket... Retry...")
+
         self.worker_socket.bind("tcp://*:{}".format(self.sock_addr))
         self.dead_worker_set = set()
 
@@ -109,16 +117,6 @@ class WorkerPool(object):
 
         worker = Worker(worker_type, self.sock_addr, container_uri=None, container_mode=None)  # TODO: container_* shouldn't be hardcoded.
         wid = worker.wid
-
-        # TODO: Move this outside of this function.
-        # Keep trying until we get a non-conflicting socket_address.
-        # while True:
-        #     port_addr = random.choice(self.socket_range)
-        #     if port_addr not in self.sockets_in_use:
-        #         self.sockets_in_use.add(port_addr)
-        #         break
-        #     else:
-        #         print("Conflicting socket... Retry...")
 
         # Add to the queues
         if worker_type not in self.task_queues:
@@ -131,20 +129,20 @@ class WorkerPool(object):
         else:
             self.task_to_worker_sets[worker_type].add(wid)
 
-        print(self.task_queues)
-        print(self.worker_capacities)
-        print(self.task_to_worker_sets)
+        print("TASK QUEUES: {}".format(self.task_queues))
 
-        # TODO: >>> Connect to worker 'launch' function.  (Remove when it works).
+        print("WORKER CAPACITIES: {}".format(self.worker_capacities))
+        print("TASK-WORKER SETS: {}".format(self.task_to_worker_sets))
+
         worker.launch()
 
         print("Successfully initialized worker! ")
         return "DONE"
 
     def recv_client_message(self, cli):
+        # >>>>>>>>>>>>>>>> CONSTRUCTION ZONE >>>>>>>>>>>>>>>>
         try:
             client_msg = cli.client_socket.recv_multipart(flags=zmq.NOBLOCK)
-            task_id = pickle.loads(client_msg[1])  # TODO: remove -- should parse bits instead.
             work_type = client_msg[-1]
 
             pri_queue = self.task_queues[work_type]
@@ -158,6 +156,8 @@ class WorkerPool(object):
             print("No client messages")
 
     def send_results_to_client(self, cli, res_q):
+
+        # TODO: Move this static function to the client instead.
 
         print("Checking length of results...")
         while not results.empty():
@@ -189,10 +189,7 @@ class WorkerPool(object):
     def register_worker(self, reg_message):
         # Set our initial capacity to 1, meaning we're ready for a task.
         if reg_message["w_type"] in self.worker_capacities:
-            self.worker_capacities[reg_message["w_type"]] += 1
-        else:
-            self.worker_capacities[reg_message["w_type"]] = 5  # TODO.
-
+            self.worker_capacities[reg_message["w_type"]] += 1  # Worker now ready to receive a task!
         print("Successfully registered worker! ")
 
     def update_worker_capacities(self):
@@ -239,7 +236,6 @@ PARALLELISM = 4
 
 while True:
     print("Getting new result")
-
     # Poll and get worker_id and result
     result = context.poller.poll()
 
@@ -249,7 +245,6 @@ while True:
     print("Pulling messages from worker...")
     try:
         worker_msg = worker_pool.worker_socket.recv_multipart(flags=zmq.NOBLOCK)
-        print(worker_msg)
         worker_result = pickle.loads(worker_msg[1])
         worker_command = pickle.loads(worker_msg[2])
     except zmq.ZMQError:
@@ -276,8 +271,6 @@ while True:
         # TODO: Read the first-n bytes instead.
 
         # ##### TODO: WORKER REGISTRATION WORKFLOW ##### #
-        # 1. Launch worker of type WORKER_TYPE. Create WORKER object with capacity = 0, put into task_type:workers dict.
-        # 2. Listen for worker registration message. Switch capacity of worker_id to 1 (i.e., be listening for message.
         # 3. Add step that takes work from task_type queue and puts it onto individual worker queue.
 
         task_id = pickle.loads(worker_msg[1])
@@ -287,7 +280,6 @@ while True:
 
         # On registration, create worker and add to worker dicts.
         if worker_command == "REGISTER":
-            # >>>>>>>>>>>>>>>> CONSTRUCTION ZONE >>>>>>>>>>>>>>>>
             worker_pool.register_worker(reg_message=worker_result)
 
         elif worker_command == "TASK_RETURN":
@@ -318,5 +310,3 @@ while True:
     # TODO: Have a set of killed workers; check the race condition where if you send a kill message to a worker after it has
     #   requested a task, the queue could look like TASK-KILL-TASK. Check against the set of killed workers;
     #   if the UUID is in there, then disregard.
-
-
