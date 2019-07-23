@@ -1,15 +1,16 @@
 
+import os
 import zmq
 import pickle
 import logging
 import argparse
 from ipyparallel.serialize import serialize_object, unpack_apply_message, pack_apply_message
 
+# TODO: Add this back in (Match structure of https://github.com/funcx-faas/funcX/blob/master/funcx/executor/high_throughput/funcx_worker.py)
+from parsl.app.errors import RemoteExceptionWrapper
 
 # Keep this here for test function.
 import time
-
-# logging.basicConfig(filename='example.log', level=logging.DEBUG)
 
 
 class Worker:
@@ -27,16 +28,16 @@ class Worker:
         self.poller = zmq.Poller()
         self.identity = identity.encode()
 
-        print("Creating worker of type: ".format(identity))
+        logger.debug("Creating worker of type: ".format(identity))
 
         self.task_socket = self.context.socket(zmq.DEALER)
-        print(identity)
+        logger.debug("Identity".format(identity))
         self.task_socket.setsockopt(zmq.IDENTITY, self.identity)
-        print("Connecting to broker socket!")
+        logger.debug("Connecting to broker socket!")
         self.task_socket.connect(self.broker_path)  # TODO: Bring back random provisioning of port number.
         self.poller.register(self.task_socket, zmq.POLLIN)
 
-        print("Worker of type {} connected!".format(self.identity))
+        logger.debug("Worker of type {} connected!".format(self.identity))
 
 
 def execute_task(bufs):
@@ -44,15 +45,15 @@ def execute_task(bufs):
     Returns the result or throws exception.
     """
 
-    print("Inside execute_task function")
+    logger.debug("Inside execute_task function")
     user_ns = locals()
     user_ns.update({'__builtins__': __builtins__})
 
-    print(bufs)
+    logger.debug(bufs)
 
     f, actual_args, kwargs = unpack_apply_message(bufs, user_ns, copy=False)
 
-    print("Message unpacked")
+    logger.debug("Message unpacked")
 
     # We might need to look into callability of the function from itself
     # since we change it's name in the new namespace
@@ -67,7 +68,7 @@ def execute_task(bufs):
                     kwargname: kwargs,
                     resultname: resultname})
 
-    print("Namespace updated")
+    logger.debug("Namespace updated")
 
     code = "{0} = {1}(*{2}, **{3})".format(resultname, fname,
                                            argname, kwargname)
@@ -83,18 +84,18 @@ def execute_task(bufs):
 
 
 def listen_and_process(result, task_type, worker_type):
-    print("Registering worker with broker...")
+    logger.debug("Registering worker with broker...")
     while True:
 
         if type(worker_type) is not bytes:
             worker_type = worker_type.encode()
 
-        print("Sending result...")
+        logger.debug("Sending result...")
         worker.task_socket.send_multipart([pickle.dumps(""), pickle.dumps(result), pickle.dumps(task_type), worker_type])
         bufs = None
         task_id = None
 
-        print("Receiving message...")
+        logger.debug("Receiving message...")
         msg = worker.task_socket.recv_multipart()
         task_id = msg[0]
         bufs = pickle.loads(msg[1])
@@ -102,18 +103,41 @@ def listen_and_process(result, task_type, worker_type):
         # TODO: Return this.
         worker_type = msg[3]
         #
-        print("WORKER TYPE {}".format(worker_type))
+        logger.debug("WORKER TYPE {}".format(worker_type))
 
-        print("Executing task...")
+        logger.debug("Executing task...")
         exec_result = execute_task(bufs)
 
-        print("Executed result: {}".format(exec_result))
+        logger.debug("Executed result: {}".format(exec_result))
 
-        # TODO: Should this be pack_apply_object or serialize_object to match IX?
+        # TODO: Change this to serialize_object to match IX?
         result = [pickle.dumps(task_id), exec_result.encode(), pickle.dumps("TASK_RETURN"), worker_type]
         time.sleep(2)
-        print(result)
+        logger.debug(result)
         task_type = "TASK_RETURN"
+
+
+def start_file_logger(filename, rank, name='parsl', level=logging.DEBUG, format_string=None):
+    """Add a stream log handler.
+    Args:
+        - filename (string): Name of the file to write logs to
+        - name (string): Logger name
+        - level (logging.LEVEL): Set the logging level.
+        - format_string (string): Set the format string
+    Returns:
+       -  None
+    """
+    if format_string is None:
+        format_string = "%(asctime)s.%(msecs)03d %(name)s:%(lineno)d Rank:{0} [%(levelname)s]  %(message)s".format(rank)
+
+    global logger
+    logger = logging.getLogger(name)
+    logger.setLevel(logging.DEBUG)
+    handler = logging.FileHandler(filename)
+    handler.setLevel(level)
+    formatter = logging.Formatter(format_string, datefmt='%Y-%m-%d %H:%M:%S')
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
 
 
 if __name__ == "__main__":
@@ -129,7 +153,21 @@ if __name__ == "__main__":
     parser.add_argument('-i', '--id_worker', default='no-id-supplied',
                         help="Port on which to connect to broker ROUTER socket. (Default=50010)")
 
+    parser.add_argument("--logdir", help="Directory path where worker log files written", default='.')
+
     args = parser.parse_args()
+
+    debug = True
+
+    try:
+        os.makedirs("{}/{}".format(args.logdir, 0))  # TODO: 0 should be a pool_id
+    except Exception:  # TODO: Too vague.
+        print("Logging directory already exists! Skipping...")
+
+    start_file_logger('{}/{}/funcx_worker_{}.log'.format(args.logdir, 0, args.id_worker),
+                      args.id_worker,
+                      name="worker_log",
+                      level=logging.DEBUG if debug else logging.INFO)
 
     worker = Worker(args.worker_type, args.id_worker, args.port_socket)
 

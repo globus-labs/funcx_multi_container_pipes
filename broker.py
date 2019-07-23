@@ -1,14 +1,13 @@
 
 import zmq
-import pickle
-import time
-import random
-import logging
-from queue import PriorityQueue
-import queue
-import subprocess
 import uuid
+import time
+import queue
+import pickle
+import subprocess
 
+
+from queue import PriorityQueue
 
 # TODO 2: Spin up containers automatically using subprocess (like process worker pool).
 # TODO 3: Use actual containers with the workers (if container_reuse or container_single_use).
@@ -46,21 +45,12 @@ class Client(object):
 
         print("Client socket successfully created!")
 
-    def results_to_client(self, result):
-
-        # Wait for threads to stabilize
-        time.sleep(1)
-
-        ident = b'B'  # TODO. Unhardcode.
-        # And then the workload
-
-        print(result)
-        print(type(result))
-
-        self.client_socket.send_multipart([ident, pickle.dumps(result)])
+    def results_to_client(self, res):
+        print("Sending results back to client...")
+        self.client_socket.send_multipart([self.client_identity, pickle.dumps(res)])
         print("Successfully sent results!")
 
-        self.client_socket.send_multipart([b'B', pickle.dumps(result)])  # TODO: Unhardcode.
+        self.client_socket.send_multipart([b'B', pickle.dumps(res)])  # TODO: Unhardcode.
 
 
 class Worker(object):
@@ -74,8 +64,17 @@ class Worker(object):
         self.worker_type = worker_type
 
     def launch(self):
-        print("Doing nothing right now. ")
-        cmd = "python3 worker.py -w {} -p {} -i {}".format(self.worker_type, self.port_addr, self.wid)
+        print("Launching new worker of container_mode: {}".format(self.container_mode))
+
+        if self.container_mode is None:
+            cmd = "python3 worker.py -w {} -p {} -i {}".format(self.worker_type, self.port_addr, self.wid)
+        elif self.container_mode == "singularity_reuse":
+            cmd = "singularity run ..."
+        elif self.container_mode == "no_reuse":
+            cmd = "singularity run ...".format(self.container_uri)
+        else:
+            raise NameError("Invalid container launch mode.")
+
         exit_code = subprocess.Popen(cmd, shell=True)
         return exit_code
 
@@ -108,16 +107,21 @@ class WorkerPool(object):
 
     # TODO: Move much of this to worker class.
     def create_worker(self, worker_type, container=None):
-        # wid = uuid.uuid4()
 
+        worker = Worker(worker_type, self.sock_addr, container_uri=None, container_mode=None)
+        wid = worker.wid
+
+        worker.launch()
+
+        # TODO: Move this outside of this function.
         # Keep trying until we get a non-conflicting socket_address.
-        while True:
-            port_addr = random.choice(self.socket_range)
-            if port_addr not in self.sockets_in_use:
-                self.sockets_in_use.add(port_addr)
-                break
-            else:
-                print("Conflicting socket... Retry...")
+        # while True:
+        #     port_addr = random.choice(self.socket_range)
+        #     if port_addr not in self.sockets_in_use:
+        #         self.sockets_in_use.add(port_addr)
+        #         break
+        #     else:
+        #         print("Conflicting socket... Retry...")
 
         # Add to the queues
         if worker_type not in self.task_queues:
@@ -125,9 +129,7 @@ class WorkerPool(object):
         if worker_type not in self.worker_capacities:
             self.worker_capacities[worker_type] = 0
 
-        # Now actually spin it up.
-        # cmd = "python3 worker.py -w {} -s {}".format(worker_type)
-
+        # TODO: >>> Connect to worker 'launch' function.
         print("Successfully initialized worker! ")
         return "DONE"
 
@@ -146,7 +148,6 @@ class WorkerPool(object):
 
         except zmq.ZMQError:
             print("No client messages")
-            pass
 
     def send_results_to_client(self, cli, res_q):
 
@@ -154,7 +155,6 @@ class WorkerPool(object):
         while not results.empty():
 
             print("Length of results is greater than zero!!!")
-
             result = res_q.get()
             print("RESULT: {}".format(result))
             result.insert(0, cli.client_identity)
@@ -187,6 +187,25 @@ class WorkerPool(object):
 
         print("Successfully registered worker! ")
 
+    def update_worker_capacities(self):
+        for work_type in self.worker_capacities:
+            print("Available worker capacity for {}: {}".format(work_type, self.worker_capacities[work_type]))
+            for _ in range(self.worker_capacities[work_type]):  # Get one message for each available capacity.
+
+                print(self.task_queues[work_type.encode()].qsize())
+                job_data = None
+
+                if self.task_queues[work_type.encode()].qsize() > 0:
+                    job_data = self.task_queues[work_type.encode()].get()
+                print("JOB DATA: {}".format(job_data))
+
+                print(job_data)
+                if job_data is not None:
+                    print("INSIDE JOB_DATA")
+                    job_data.item[0] = work_type.encode()
+                    self.worker_socket.send_multipart(job_data.item)
+                    self.worker_capacities[work_type] -= 1
+
     def kill_worker(self, identity):
         # TODO: Append kill message to queue.
         # TODO: Wrap up this stuff.
@@ -207,6 +226,9 @@ results = queue.Queue()
 # vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv #
 #        MAIN LOOP BELOW           #
 # vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv #
+
+
+# >>>>>>>>>>>>>>>> CONSTRUCTION ZONE >>>>>>>>>>>>>>>>
 
 while True:
     print("Getting new result")
@@ -238,6 +260,12 @@ while True:
     if worker_msg is not None:
 
         # TODO: Read the first-n bytes instead.
+
+        # ##### TODO: WORKER REGISTRATION WORKFLOW ##### #
+        # 1. Launch worker of type WORKER_TYPE. Create WORKER object with capacity = 0, put into task_type:workers dict.
+        # 2. Listen for worker registration message. Switch capacity of worker_id to 1 (i.e., be listening for message.
+        # 3. Add step that takes work from task_type queue and puts it onto individual worker queue.
+
         task_id = pickle.loads(worker_msg[1])
         worker_result = pickle.loads(worker_msg[2])
         worker_command = pickle.loads(worker_msg[3])
@@ -251,10 +279,7 @@ while True:
             print("In TASK RETURN: {}".format(worker_result))
             worker_pool.populate_results(worker_result)
 
-            try:
-                assert(results.qsize() > 0, "EmptyQueueError")
-            except AssertionError:
-                print("QUEUE should be nonempty but is empty!")
+            assert(results.qsize() > 0, "EmptyQueueError")
 
             # print("LATEST RESULT: {}".format(results.get()))  #
             worker_pool.send_results_to_client(client, results)
@@ -267,25 +292,10 @@ while True:
     # TODO: SWITCH entire model to hand task to individual works instead
     #           (FIFO workers' work_request queue -- rather than capacity?)
 
-    for work_type in worker_pool.worker_capacities:
-        print("Available worker capacity for {}: {}".format(work_type, worker_pool.worker_capacities[work_type]))
-        for _ in range(worker_pool.worker_capacities[work_type]):  # Get one message for each available capacity.
+    print("Updating worker capacities...")
+    worker_pool.update_worker_capacities()
 
-            print(worker_pool.task_queues[work_type.encode()].qsize())
-            job_data = None
-
-            if worker_pool.task_queues[work_type.encode()].qsize() > 0:
-                job_data = worker_pool.task_queues[work_type.encode()].get()
-            print("JOB DATA: {}".format(job_data))
-
-            print(job_data)
-            if job_data is not None:
-                print("INSIDE JOB_DATA")
-                job_data.item[0] = work_type.encode()
-                worker_pool.worker_socket.send_multipart(job_data.item)
-                worker_pool.worker_capacities[work_type] -= 1
-
-    print("SENDING BACK RESULTS")
+    print("Sending results back to client...")
     worker_pool.send_results_to_client(client, results)
 
     time.sleep(0.5)
