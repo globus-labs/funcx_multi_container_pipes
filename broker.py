@@ -55,7 +55,7 @@ class Client(object):
 
 class Worker(object):
     def __init__(self, worker_type, port_addr, container_uri=None, container_mode=None):
-        self.capacity = 1
+        self.capacity = 0
         self.container_mode = container_mode
         self.container_uri = container_uri
         self.port_addr = port_addr
@@ -105,13 +105,10 @@ class WorkerPool(object):
         self.worker_socket.bind("tcp://*:{}".format(self.sock_addr))
         self.dead_worker_set = set()
 
-    # TODO: Move much of this to worker class.
     def create_worker(self, worker_type, container=None):
 
-        worker = Worker(worker_type, self.sock_addr, container_uri=None, container_mode=None)
+        worker = Worker(worker_type, self.sock_addr, container_uri=None, container_mode=None)  # TODO: container_* shouldn't be hardcoded.
         wid = worker.wid
-
-        worker.launch()
 
         # TODO: Move this outside of this function.
         # Keep trying until we get a non-conflicting socket_address.
@@ -126,10 +123,21 @@ class WorkerPool(object):
         # Add to the queues
         if worker_type not in self.task_queues:
             self.task_queues[worker_type] = PriorityQueue()  # Create queue if not one for this worker type.
-        if worker_type not in self.worker_capacities:
+        if worker_type not in self.worker_capacities:  # Init wid's capacity to be zero until we finish setting it up.
             self.worker_capacities[worker_type] = 0
+        if worker_type not in self.task_to_worker_sets:
+            self.task_to_worker_sets[worker_type] = set()
+            self.task_to_worker_sets[worker_type].add(wid)
+        else:
+            self.task_to_worker_sets[worker_type].add(wid)
 
-        # TODO: >>> Connect to worker 'launch' function.
+        print(self.task_queues)
+        print(self.worker_capacities)
+        print(self.task_to_worker_sets)
+
+        # TODO: >>> Connect to worker 'launch' function.  (Remove when it works).
+        worker.launch()
+
         print("Successfully initialized worker! ")
         return "DONE"
 
@@ -221,14 +229,13 @@ worker_pool = WorkerPool(context)
 
 results = queue.Queue()
 
-# worker_pool.create_worker('tabular-ext', <CONTAINER_NAME>)
+worker_pool.create_worker('B')
 
 # vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv #
 #        MAIN LOOP BELOW           #
 # vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv #
 
-
-# >>>>>>>>>>>>>>>> CONSTRUCTION ZONE >>>>>>>>>>>>>>>>
+PARALLELISM = 4
 
 while True:
     print("Getting new result")
@@ -249,9 +256,16 @@ while True:
         print("No worker messages")
         pass
 
+    # TODO 1: CREATE A function in WorkerPool that has simple scheduling that checks to see if we should change our worker_pool.
+    # TODO 2: KILL ALL workers (i.e., append kill message to queue) OF WORKERS OF UNNEEDED TYPES.
+    # TODO 3: CREATE/LAUNCH WORKERS OF THE NEEDED TYPE.
+    # ##############
+
+    # ##############
+
     print("Pulling messages from client...")
 
-    work_type = b"*******"
+    work_type = b"*******"  # TODO: This is pointless...
 
     # Check to see if client message exists and add to appropriate queues.
     worker_pool.recv_client_message(client)
@@ -273,6 +287,7 @@ while True:
 
         # On registration, create worker and add to worker dicts.
         if worker_command == "REGISTER":
+            # >>>>>>>>>>>>>>>> CONSTRUCTION ZONE >>>>>>>>>>>>>>>>
             worker_pool.register_worker(reg_message=worker_result)
 
         elif worker_command == "TASK_RETURN":
@@ -303,3 +318,5 @@ while True:
     # TODO: Have a set of killed workers; check the race condition where if you send a kill message to a worker after it has
     #   requested a task, the queue could look like TASK-KILL-TASK. Check against the set of killed workers;
     #   if the UUID is in there, then disregard.
+
+
