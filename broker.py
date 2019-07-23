@@ -50,7 +50,7 @@ class Client(object):
         self.client_socket.send_multipart([self.client_identity, pickle.dumps(res)])
         print("Successfully sent results!")
 
-        self.client_socket.send_multipart([b'B', pickle.dumps(res)])  # TODO: Unhardcode.
+        # self.client_socket.send_multipart([b'B', pickle.dumps(res)])  # TODO: Unhardcode.
 
 
 class Worker(object):
