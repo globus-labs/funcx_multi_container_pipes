@@ -3,6 +3,7 @@ import zmq
 import pickle
 import random
 import uuid
+import time
 
 from ipyparallel.serialize import serialize_object, unpack_apply_message, pack_apply_message
 
@@ -17,7 +18,9 @@ def add2nums(num1, num2):
     return num1 + num2
 
 
-for req in range(1):
+for req in range(10):
+
+    time.sleep(4)
     print("Sending request {}".format(req))
     task_id = str(uuid.uuid4())
 
@@ -30,8 +33,11 @@ for req in range(1):
 
 total = 0
 while True:
+
     print("Listening for new result")
     # We receive one part, with the workload
     request = worker.recv_multipart()
+
+    # time.sleep(4)
+
     print(request)
-    break

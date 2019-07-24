@@ -29,12 +29,12 @@ class Worker:
         self.identity = identity.encode()
 
         logger.debug("Creating worker of type: ".format(identity))
+        logger.debug("Worker has identity: {}".format(self.wid.encode()))
 
         self.task_socket = self.context.socket(zmq.DEALER)
-        logger.debug("Identity".format(identity))
-        self.task_socket.setsockopt(zmq.IDENTITY, self.identity)
+        self.task_socket.setsockopt(zmq.IDENTITY, self.wid.encode())
         logger.debug("Connecting to broker socket!")
-        self.task_socket.connect(self.broker_path)  # TODO: Bring back random provisioning of port number.
+        self.task_socket.connect(self.broker_path)
         self.poller.register(self.task_socket, zmq.POLLIN)
 
         logger.debug("Worker of type {} connected!".format(self.identity))
@@ -91,7 +91,7 @@ def listen_and_process(result, task_type, worker_type):
             worker_type = worker_type.encode()
 
         logger.debug("Sending result...")
-        worker.task_socket.send_multipart([pickle.dumps(""), pickle.dumps(result), pickle.dumps(task_type), worker_type])
+        worker.task_socket.send_multipart([pickle.dumps(""), pickle.dumps(result), pickle.dumps(task_type), worker_type, pickle.dumps(worker.wid)])
         bufs = None
         task_id = None
 
@@ -111,7 +111,7 @@ def listen_and_process(result, task_type, worker_type):
         logger.debug("Executed result: {}".format(exec_result))
 
         # TODO: Change this to serialize_object to match IX?
-        result = [pickle.dumps(task_id), exec_result.encode(), pickle.dumps("TASK_RETURN"), worker_type]
+        result = [pickle.dumps(task_id), exec_result.encode(), pickle.dumps("TASK_RETURN"), worker_type, worker.wid]
         time.sleep(2)
         logger.debug(result)
         task_type = "TASK_RETURN"
