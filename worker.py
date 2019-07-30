@@ -6,12 +6,13 @@ import logging
 import argparse
 from ipyparallel.serialize import serialize_object, unpack_apply_message, pack_apply_message
 
-# TODO: Add this back in (Match structure of https://github.com/funcx-faas/funcX/blob/master/funcx/executor/high_throughput/funcx_worker.py)
 from parsl.app.errors import RemoteExceptionWrapper
 
 # Keep this here for test function.
 import time
 
+
+# TODO: ADD BACK KILL.
 
 class Worker:
     def __init__(self, identity, wid, port_addr):

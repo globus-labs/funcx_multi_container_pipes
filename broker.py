@@ -5,21 +5,11 @@ import time
 import queue
 import pickle
 import random
+import scheduler
 import subprocess
 
 
 from queue import PriorityQueue
-
-# TODO: TODAY/TOMORROW.
-
-# TODO 0: think of all workers as waiting for either WORK or KILL.
-# TODO 1: Spin up containers automatically using subprocess (like process worker pool).
-# TODO 2: Use actual containers with the workers (if container_reuse or container_single_use).
-# TODO 3: Receiving task and killing worker in 'no_reuse' should happen back-to-back.
-# TODO 4: Implement a strategy.
-# TODO 5: Figure out how to pump in work really fast.
-# TODO 6: Track resources on the system (can then use this for scheduling purposes).
-
 
 from dataclasses import dataclass, field
 from typing import Any
@@ -70,9 +60,9 @@ class Worker(object):
         if self.container_mode is None:
             cmd = "python3 worker.py -w {} -p {} -i {}".format(self.worker_type, self.port_addr, self.wid)
         elif self.container_mode == "singularity_reuse":
-            cmd = "singularity run ..."
+            cmd = "singularity run --writable {} REUSE".format(self.container_uri)
         elif self.container_mode == "no_reuse":
-            cmd = "singularity run ...".format(self.container_uri)
+            cmd = "singularity run --writable {} NO_REUSE".format(self.container_uri)
         else:
             raise NameError("Invalid container launch mode.")
 
@@ -263,6 +253,8 @@ worker_pool.create_worker('B')
 # vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv #
 
 PARALLELISM = 4
+alive_list = None
+kill_list = None
 
 while True:
     print("Getting new result")
@@ -285,8 +277,12 @@ while True:
     # TODO 2: KILL ALL workers (i.e., append kill message to queue) OF WORKERS OF UNNEEDED TYPES.
     # TODO 3: CREATE/LAUNCH WORKERS OF THE NEEDED TYPE.
     # ##############
+    worker_pool.kill_workers(kill_list)
 
-    # ##############
+    for new_worker in alive_list:
+        for i in range(alive_list, new_worker):
+            # Worker type
+            worker = worker_pool.create_worker(new_worker)
 
     print("Pulling messages from client...")
 
@@ -330,4 +326,8 @@ while True:
     print("Sending results back to client...")
     worker_pool.send_results_to_client(client, results)
 
+    alive_list, kill_list = scheduler.naive_scheduler(worker_pool.task_queues, max_workers=PARALLELISM)
+
     time.sleep(0.5)
+
+
