@@ -20,7 +20,7 @@ def add2nums(num1, num2):
 
 for req in range(10):
 
-    time.sleep(4)
+    # time.sleep(4)
     print("Sending request {}".format(req))
     task_id = str(uuid.uuid4())
 
@@ -29,6 +29,7 @@ for req in range(10):
 
     obj = pack_apply_message(add2nums, args, kwargs)
     worker.send_multipart([pickle.dumps(task_id), pickle.dumps(obj), pickle.dumps("INVOKE"), b'B'])
+    worker.send_multipart([pickle.dumps(task_id), pickle.dumps(obj), pickle.dumps("INVOKE"), b'A'])
 
 
 total = 0
