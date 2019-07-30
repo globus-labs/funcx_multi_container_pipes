@@ -75,9 +75,13 @@ class WorkerPool(object):
 
     def __init__(self, z_context):
 
+        # TODO: Write more docs as to what is in thiese things.
+
         self.task_queues = {}  # k-v: task_type - task_q (PriorityQueue)
 
         self.worker_capacities = {}  # k-v: worker_id - capacity (integer... should only ever be 0 or 1).
+        # TODO: Switch ^^^ to FIFO task queue.
+
         self.task_to_worker_sets = {}  # k-v: task_type - workers (set)
 
         # Do all the ZMQ stuff
@@ -91,6 +95,9 @@ class WorkerPool(object):
         self.poller.register(self.worker_socket, zmq.POLLIN)
 
         # Keep trying until we get a non-conflicting socket_address.
+        # TODO: Look at Interchange version of code to add addresses. Line 198 of htex.
+        # if worker_port specified, try to connect... if error, just report it.
+        # if none specified, then
         while True:
             self.sock_addr = random.choice(self.socket_range)
             if self.sock_addr not in self.sockets_in_use:
@@ -159,7 +166,8 @@ class WorkerPool(object):
         print("ALL CURRENT RESULTS RETURNED. ")
 
     def populate_results(self, worker_result):
-        worker_task_type = pickle.loads(worker_msg[5]) # Parse out the worker_type.  # TODO.
+        # TODO: be sending bye strings.
+        worker_task_type = pickle.loads(worker_msg[5]) # Parse out the worker_type.
         print("WORK TYPE: {}".format(worker_task_type))
 
         self.worker_capacities[worker_task_type] += 1  # Add 1 back to the capacity.
@@ -237,6 +245,8 @@ class WorkerPool(object):
                             killed_workers += 1
 
 
+# TODO: Put in __name__ == "__main__"
+
 context = ZMQContext()
 
 print("Creating client...")
@@ -246,6 +256,7 @@ worker_pool = WorkerPool(context)
 
 results = queue.Queue()
 
+# TODO.
 worker_pool.create_worker('B')
 
 # vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv #
@@ -259,6 +270,7 @@ kill_list = None
 while True:
     print("Getting new result")
     # Poll and get worker_id and result
+    # TODO: Check to see if worker_msg or client_msg in poll (don't do the noblock here.
     result = context.poller.poll()
 
     worker_msg = None
@@ -297,6 +309,9 @@ while True:
         # TODO: Read the first-n bytes instead.
 
         task_id = pickle.loads(worker_msg[1])
+
+        # TODO: Result and command repeated below.
+        # TODO: Put command before result.
         worker_result = pickle.loads(worker_msg[2])
         worker_command = pickle.loads(worker_msg[3])
         task_type = worker_msg[4]

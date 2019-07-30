@@ -21,7 +21,7 @@ def naive_scheduler(task_queues, worker_capacities, max_workers):
     #     q_len = task_queues[worker_type].qsize()
     #     q_ranker[worker_type]
     #
-    #     # TODO:
+    #
 
     kill_list = 5
     alive_list = 5
