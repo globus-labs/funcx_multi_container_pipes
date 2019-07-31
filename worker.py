@@ -12,8 +12,6 @@ from parsl.app.errors import RemoteExceptionWrapper
 import time
 
 
-# TODO: ADD BACK KILL.
-
 class Worker:
     def __init__(self, identity, wid, port_addr):
         self.wid = wid
@@ -98,7 +96,13 @@ def listen_and_process(result, task_type, worker_type):
 
         logger.debug("Receiving message...")
         msg = worker.task_socket.recv_multipart()
+        logger.info("MESSAGE: {}".format(msg))
         task_id = msg[0]
+
+        if len(msg) == 1 and msg[0] == b"KILL":
+            logger.info("KILLING -- Kill message received! ")
+            exit()
+
         bufs = pickle.loads(msg[1])
 
         # TODO: Return this.
@@ -162,7 +166,7 @@ if __name__ == "__main__":
 
     try:
         os.makedirs("{}/{}".format(args.logdir, 0))  # TODO: 0 should be a pool_id
-    except Exception:  # TODO: Too vague.
+    except FileExistsError:
         print("Logging directory already exists! Skipping...")
 
     start_file_logger('{}/{}/funcx_worker_{}.log'.format(args.logdir, 0, args.id_worker),

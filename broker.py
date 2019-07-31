@@ -16,12 +16,9 @@ from dataclasses import dataclass, field
 # TODO 0: Add a hardcoded scheduler (maybe random) -- automatically spin up and down instances to match.
 # TODO 3: Ensure we can mount to containers ('singularity run...').
 # TODO 4: Figure out how to separate container_reuse and no_reuse mode.
-# ***  TODO 5: Ensure we can successfully kill workers. *** maybe do this first
 # TODO 6: Make the scheduler more complex.
 # TODO 7: Cleanups (including logging!) .
 # TODO 8: Docs.
-
-
 
 
 @dataclass(order=True)
@@ -147,15 +144,8 @@ class WorkerPool(object):
             client_msg = cli.client_socket.recv_multipart(flags=zmq.NOBLOCK)
             work_type = client_msg[-1]
 
-            # print("DEBUG >> WORK TYPE: {}".format(type(work_type)))
-            # print(work_type)
-
             pri_queue = self.task_queues[work_type.decode()]
             pri_queue.put(PrioritizedItem(5, client_msg))
-            # print("Priority Queue size: {}".format(pri_queue.qsize()))
-            # print("Work type: {}".format(work_type.decode()))
-
-            # print(pri_queue.get())
 
 
         except zmq.ZMQError:
@@ -178,7 +168,7 @@ class WorkerPool(object):
         print("ALL CURRENT RESULTS RETURNED. ")
 
     def populate_results(self, worker_result):
-        # TODO: be sending bye strings.
+        # TODO: be sending byte strings.
         worker_task_type = pickle.loads(worker_msg[5]) # Parse out the worker_type.
         print("WORK TYPE: {}".format(worker_task_type))
 
@@ -201,7 +191,6 @@ class WorkerPool(object):
 
     def assign_to_workers(self):
         for task_type in self.task_queues:
-            print(task_type)
 
             # If there are tasks in the queue and a positive number of workers.
             if self.task_queues[task_type].qsize() > 0 and len(self.task_to_worker_sets[task_type]) > 0:
@@ -212,49 +201,50 @@ class WorkerPool(object):
                     assert (results.qsize() > 0, "EmptyQueueError")
 
                     # IF the worker has available capacity (and is not dead)
-                    if self.worker_capacities[wid] > 0 and wid not in self.dead_worker_set:
+                    if self.worker_capacities[wid] > 0:  # and wid not in self.dead_worker_set:  # TODO: Bring this back.
                         job_data = task
 
                     if job_data is not None:
                         job_data.item[0] = wid.encode()
+
                         self.worker_socket.send_multipart(job_data.item)
                         self.worker_capacities[wid] -= 1
                         assert (self.worker_capacities[wid] >= 0, "Invalid capacity count")
+                    # ***************************************************** #
 
     def kill_workers(self, identity_tuples):
-
-        # TODO: Clean up and test if working (esp. the sending empty byte list?).
 
         # Receive a list of tuples of worker_type, # to kill.
         if identity_tuples is not None:
             for id_tup in identity_tuples:
-                id, num_kill = id_tup
+                w_type, num_kill = id_tup
 
                 killed_workers = 0
-                # Get num_kill distinct worker ids
-                for _ in range(1, num_kill+1):
 
+                # Kill num_kill distinct worker ids
+                for wid in self.task_to_worker_sets[w_type]:
                     # Pick worker that's waiting for work (if any).
-                    for wid in self.task_to_worker_sets[id]:
-                        if self.worker_capacities[wid] == 1:  # if waiting.
-                            self.worker_capacities[wid] = 0  # Set to zero.
-                            self.dead_worker_set.add(wid)  # add to dead_pool.
+                    if self.worker_capacities[wid] == 1 and killed_workers < num_kill:  # if waiting.
+                        print("Killing bored workers!")
+                        self.worker_capacities[wid] = 0  # Set to zero.
+                        self.dead_worker_set.add(wid)  # add to dead_pool.
 
-                            # Append KILL message to its queue.
-                            pri_queue = self.task_queues[work_type]
-                            pri_queue.put(PrioritizedItem(5, [b""]))  # TODO: See if kill works.
+                        # Append KILL message to its queue.
+                        pri_queue = self.task_queues[w_type]
 
-                            killed_workers += 1
+                        # Append KILL message to its queue.
+                        pri_queue.put(PrioritizedItem(5, [wid.encode(), b"KILL"]))
+                        killed_workers += 1
 
-                        # Now if need to kill busy workers...
-                        if killed_workers < num_kill:
-                            self.dead_worker_set.add(wid)  # add to dead_pool.
+                    elif killed_workers < num_kill:
+                        print("Have to kill dead busy workers!")
+                        self.dead_worker_set.add(wid)  # add to dead_pool.
 
-                            # Append KILL message to its queue.
-                            pri_queue = self.task_queues[work_type]
-                            pri_queue.put(PrioritizedItem(5, b""))
-
-                            killed_workers += 1
+                        # Append KILL message to its queue.
+                        pri_queue = self.task_queues[w_type]
+                        pri_queue.put(PrioritizedItem(5, [wid.encode(), b"KILL"]))
+                        killed_workers += 1
+            print(">>> FINISHED WORKER_KILL PHASE :))))")
 
 
 if __name__ == "__main__":
@@ -273,6 +263,13 @@ if __name__ == "__main__":
     worker_pool.create_worker('B')
     worker_pool.create_worker('A')
     worker_pool.create_worker('A')
+
+    worker_pool.kill_workers([('A', 2)])
+
+    worker_pool.create_worker('A')
+
+    print("DEAD WORKER POOL: ")
+    print(worker_pool.dead_worker_set)
 
     # vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv #
     #        MAIN LOOP BELOW           #
@@ -313,7 +310,7 @@ if __name__ == "__main__":
 
         print("Pulling messages from client...")
 
-        work_type = b"*******"  # TODO: This is pointless...
+        work_type = b"*******"  # TODO: This is pointless... Why do I need it?
 
         # Check to see if client message exists and add to appropriate queues.
         worker_pool.recv_client_message(client)
@@ -322,7 +319,6 @@ if __name__ == "__main__":
         if worker_msg is not None:
 
             # TODO: Read the first-n bytes instead.
-
             task_id = pickle.loads(worker_msg[1])
 
             # TODO: Result and command repeated below.
@@ -357,6 +353,6 @@ if __name__ == "__main__":
 
         # TODO: Add back.
         # alive_list, kill_list = scheduler.naive_scheduler(worker_pool.task_queues, max_workers=PARALLELISM)
-        kill()
+        # kill()
 
         time.sleep(0.5)
