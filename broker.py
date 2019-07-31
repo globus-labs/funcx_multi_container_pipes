@@ -12,13 +12,13 @@ from typing import Any
 from queue import PriorityQueue
 from dataclasses import dataclass, field
 
-# TODO BEFORE THE YADU MEETING!
-# TODO 0: Add a hardcoded scheduler (maybe random) -- automatically spin up and down instances to match.
+# TODO
+# TODO 1: Why are we losing work? 
 # TODO 3: Ensure we can mount to containers ('singularity run...').
 # TODO 4: Figure out how to separate container_reuse and no_reuse mode.
-# TODO 6: Make the scheduler more complex.
 # TODO 7: Cleanups (including logging!) .
 # TODO 8: Docs.
+# TODO 9: FIFO Queue for workers requesting jobs.
 
 
 @dataclass(order=True)
@@ -46,12 +46,12 @@ class Client(object):
         self.client_socket.bind("tcp://*:50052")  # TODO: This should also use the Interchange port binding.
         self.client_identity = b"client_identity"
 
-        print("Client socket successfully created!")
+        # print("Client socket successfully created!")
 
     def results_to_client(self, res):
-        print("Sending results back to client...")
+        # print("Sending results back to client...")
         self.client_socket.send_multipart([self.client_identity, pickle.dumps(res)])
-        print("Successfully sent results!")
+        # print("Successfully sent results!")
 
 
 class Worker(object):
@@ -144,28 +144,33 @@ class WorkerPool(object):
             client_msg = cli.client_socket.recv_multipart(flags=zmq.NOBLOCK)
             work_type = client_msg[-1]
 
+            # TODO: If does not already exist, add a new task_queue.
+            if work_type.decode() not in self.task_queues:
+                self.task_queues[work_type.decode()] = PriorityQueue()
+                self.task_to_worker_sets[work_type.decode()] = set()
+
             pri_queue = self.task_queues[work_type.decode()]
             pri_queue.put(PrioritizedItem(5, client_msg))
 
 
         except zmq.ZMQError:
-            print("No client messages")
+            # print("No client messages")
+            pass
 
     def send_results_to_client(self, cli, res_q):
 
         # TODO: Move this static function to the client instead.
-
-        print("Checking length of results...")
+        # print("Checking length of results...")
         while not results.empty():
 
-            print("Length of results is greater than zero!!!")
+            # print("Length of results is greater than zero!!!")
             result = res_q.get()
-            print("RESULT: {}".format(result))
+            # print("RESULT: {}".format(result))
             result.insert(0, cli.client_identity)
-            print("SENDING RESULTS BACK TO CLIENT....")
+            # print("SENDING RESULTS BACK TO CLIENT....")
             cli.results_to_client(result)
-            print("MESSAGE SUCCESSFULLY SENT!")
-        print("ALL CURRENT RESULTS RETURNED. ")
+            # print("MESSAGE SUCCESSFULLY SENT!")
+        # print("ALL CURRENT RESULTS RETURNED. ")
 
     def populate_results(self, worker_result):
         # TODO: be sending byte strings.
@@ -176,11 +181,11 @@ class WorkerPool(object):
 
         # Receive from the worker.
         try:
-            print("RESULT RECEIVED")
+            # print("RESULT RECEIVED")
             results.put(worker_result)
-            print("RESULTS: {}".format(results))
+            # print("RESULTS: {}".format(results))
         except zmq.ZMQError:
-            print("Nothing to task_return.")
+            # print("Nothing to task_return.")
             pass
 
     def register_worker(self, reg_message):
@@ -210,7 +215,7 @@ class WorkerPool(object):
                         self.worker_socket.send_multipart(job_data.item)
                         self.worker_capacities[wid] -= 1
                         assert (self.worker_capacities[wid] >= 0, "Invalid capacity count")
-                    # ***************************************************** #
+
 
     def kill_workers(self, identity_tuples):
 
@@ -222,10 +227,10 @@ class WorkerPool(object):
                 killed_workers = 0
 
                 # Kill num_kill distinct worker ids
-                for wid in self.task_to_worker_sets[w_type]:
+                for wid in self.task_to_worker_sets[w_type].copy():
                     # Pick worker that's waiting for work (if any).
                     if self.worker_capacities[wid] == 1 and killed_workers < num_kill:  # if waiting.
-                        print("Killing bored workers!")
+                        # print("Killing bored workers!")
                         self.worker_capacities[wid] = 0  # Set to zero.
                         self.dead_worker_set.add(wid)  # add to dead_pool.
 
@@ -236,40 +241,52 @@ class WorkerPool(object):
                         pri_queue.put(PrioritizedItem(5, [wid.encode(), b"KILL"]))
                         killed_workers += 1
 
+                        # Now remove the worker_id from the task_to_worker set.
+                        self.task_to_worker_sets[w_type].remove(wid)
+
                     elif killed_workers < num_kill:
-                        print("Have to kill dead busy workers!")
+                        # print("Have to kill dead busy workers!")
                         self.dead_worker_set.add(wid)  # add to dead_pool.
 
                         # Append KILL message to its queue.
                         pri_queue = self.task_queues[w_type]
                         pri_queue.put(PrioritizedItem(5, [wid.encode(), b"KILL"]))
                         killed_workers += 1
-            print(">>> FINISHED WORKER_KILL PHASE :))))")
+
+                        # Now remove the worker_id from the task_to_worker set.
+                        self.task_to_worker_sets[w_type].remove(wid)
+
+
+            # print(">>> FINISHED WORKER_KILL PHASE :))))")
 
 
 if __name__ == "__main__":
 
     context = ZMQContext()
 
-    print("Creating client...")
+    # print("Creating client...")
     client = Client(context)
 
     worker_pool = WorkerPool(context)
 
     results = queue.Queue()
 
-    # TODO. Make this line unnecessary.
-    worker_pool.create_worker('B')
-    worker_pool.create_worker('B')
-    worker_pool.create_worker('A')
-    worker_pool.create_worker('A')
+    # # TODO. Make this line unnecessary.
+    # worker_pool.create_worker('B')
+    # worker_pool.create_worker('B')
+    # worker_pool.create_worker('A')
+    # worker_pool.create_worker('A')
+    #
+    # print(worker_pool.task_to_worker_sets)
+    # worker_pool.kill_workers([('A', 2)])
+    # print(worker_pool.task_to_worker_sets)
+    #
+    # exit()
 
-    worker_pool.kill_workers([('A', 2)])
+    # worker_pool.create_worker('A')
 
-    worker_pool.create_worker('A')
-
-    print("DEAD WORKER POOL: ")
-    print(worker_pool.dead_worker_set)
+    # print("DEAD WORKER POOL: ")
+    # print(worker_pool.dead_worker_set)
 
     # vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv #
     #        MAIN LOOP BELOW           #
@@ -280,7 +297,10 @@ if __name__ == "__main__":
     kill_list = None
 
     while True:
-        print("Getting new result")
+
+        print("TASK:WORKER Sets: {}".format(worker_pool.task_to_worker_sets))
+
+        # print("Getting new result")
         # Poll and get worker_id and result
         # TODO: Check to see if worker_msg or client_msg in poll (don't do the noblock here.
         result = context.poller.poll()
@@ -288,32 +308,45 @@ if __name__ == "__main__":
         worker_msg = None
         client_msg = None
 
-        print("Pulling messages from worker...")
+        # print("Pulling messages from worker...")
         try:
             worker_msg = worker_pool.worker_socket.recv_multipart(flags=zmq.NOBLOCK)
             worker_result = pickle.loads(worker_msg[1])
             worker_command = pickle.loads(worker_msg[2])
         except zmq.ZMQError:
-            print("No worker messages")
+            # print("No worker messages")
             pass
 
-        # TODO 1: CREATE A function in WorkerPool that has simple scheduling that checks to see if we should change our worker_pool.
-        # TODO 2: KILL ALL workers (i.e., append kill message to queue) OF WORKERS OF UNNEEDED TYPES.
-        # TODO 3: CREATE/LAUNCH WORKERS OF THE NEEDED TYPE.
-        # ##############
-        # worker_pool.kill_workers(kill_list)
-        #
-        # for new_worker in alive_list:
-        #     for i in range(alive_list, new_worker):
-        #         # Worker type
-        #         worker = worker_pool.create_worker(new_worker)
 
-        print("Pulling messages from client...")
-
-        work_type = b"*******"  # TODO: This is pointless... Why do I need it?
+        # print("Pulling messages from client...")
 
         # Check to see if client message exists and add to appropriate queues.
         worker_pool.recv_client_message(client)
+
+        # *** TODO: HERE IS WHERE WE NEED TO SPIN DOWN AND THEN SPIN UP WORKERS. ***
+
+        # TODO: Add back.
+        # SCHEDULER: Get two lists of tuples containing (worker_type, # workers to create/kill).
+        alive_list, kill_list = scheduler.naive_scheduler(worker_pool.task_queues,
+                                                          worker_pool.task_to_worker_sets, max_workers=PARALLELISM)
+
+        print("Alive: {}".format(alive_list))
+        print("Kill: {}".format(kill_list))
+
+        # First we want to kill all of the unnecessary containers.
+        if kill_list is not None:
+            print("Processing KILL list...")
+            worker_pool.kill_workers(kill_list)
+
+        # Next we want to bring all of the new containers to life.
+        if alive_list is not None:
+            print("Processing ALIVE list...")
+            for alive_tup in alive_list:
+                for i in range(1, alive_tup[1]+1):
+                    # Worker type
+                    worker = worker_pool.create_worker(alive_tup[0])
+
+        # **************************************************************************
 
         # If we have a message from worker, process it.
         if worker_msg is not None:
@@ -332,7 +365,7 @@ if __name__ == "__main__":
                 worker_pool.register_worker(reg_message=worker_result)
 
             elif worker_command == "TASK_RETURN":
-                print("In TASK RETURN: {}".format(worker_result))
+                # print("In TASK RETURN: {}".format(worker_result))
                 worker_pool.populate_results(worker_result)
 
                 assert(results.qsize() > 0, "EmptyQueueError")
@@ -342,17 +375,12 @@ if __name__ == "__main__":
             else:
                 raise NameError("[funcX] Unknown command type.")
 
-        # TODO: SWITCH entire model to hand task to individual works instead
-        #           (FIFO workers' work_request queue -- rather than capacity?)
+        # TODO: (FIFO workers' work_request queue -- rather than capacity?)
 
-        print("Updating worker capacities...")
+        # print("Updating worker capacities...")
         worker_pool.assign_to_workers()
 
-        print("Sending results back to client...")
+        # print("Sending results back to client...")
         worker_pool.send_results_to_client(client, results)
-
-        # TODO: Add back.
-        # alive_list, kill_list = scheduler.naive_scheduler(worker_pool.task_queues, max_workers=PARALLELISM)
-        # kill()
 
         time.sleep(0.5)
