@@ -13,8 +13,8 @@ from queue import PriorityQueue
 from dataclasses import dataclass, field
 
 # TODO
-# TODO 1: Why are we losing work? 
-# TODO 3: Ensure we can mount to containers ('singularity run...').
+# TODO 1: Why are we losing work when the client drives?
+# TODO 3: Ensure we can still mount to containers ('singularity run...').
 # TODO 4: Figure out how to separate container_reuse and no_reuse mode.
 # TODO 7: Cleanups (including logging!) .
 # TODO 8: Docs.
@@ -152,7 +152,6 @@ class WorkerPool(object):
             pri_queue = self.task_queues[work_type.decode()]
             pri_queue.put(PrioritizedItem(5, client_msg))
 
-
         except zmq.ZMQError:
             # print("No client messages")
             pass
@@ -162,15 +161,9 @@ class WorkerPool(object):
         # TODO: Move this static function to the client instead.
         # print("Checking length of results...")
         while not results.empty():
-
-            # print("Length of results is greater than zero!!!")
             result = res_q.get()
-            # print("RESULT: {}".format(result))
             result.insert(0, cli.client_identity)
-            # print("SENDING RESULTS BACK TO CLIENT....")
             cli.results_to_client(result)
-            # print("MESSAGE SUCCESSFULLY SENT!")
-        # print("ALL CURRENT RESULTS RETURNED. ")
 
     def populate_results(self, worker_result):
         # TODO: be sending byte strings.
@@ -197,8 +190,11 @@ class WorkerPool(object):
     def assign_to_workers(self):
         for task_type in self.task_queues:
 
+            print("[ASSIGN] Queue size: {}".format(self.task_queues[task_type].qsize()))
+
             # If there are tasks in the queue and a positive number of workers.
             if self.task_queues[task_type].qsize() > 0 and len(self.task_to_worker_sets[task_type]) > 0:
+
                 task = self.task_queues[task_type].get()
 
                 for wid in self.task_to_worker_sets[task_type]:
@@ -206,16 +202,25 @@ class WorkerPool(object):
                     assert (results.qsize() > 0, "EmptyQueueError")
 
                     # IF the worker has available capacity (and is not dead)
-                    if self.worker_capacities[wid] > 0:  # and wid not in self.dead_worker_set:  # TODO: Bring this back.
+                    if self.worker_capacities[wid] > 0 or wid in self.dead_worker_set:  # and wid not in self.dead_worker_set:
+                        print("{} HAS available capacity!".format(wid))
                         job_data = task
+                    else:
+                        print("{} DOES NOT HAVE available capacity".format(wid))
 
                     if job_data is not None:
+
+                        if job_data.item[1] == b"KILL":
+                            print("***** Sending KILL MESSAGE to {} *****".format(wid))
+                            self.dead_worker_set.add(wid)
+
                         job_data.item[0] = wid.encode()
+
+                        # print(job_data.item)
 
                         self.worker_socket.send_multipart(job_data.item)
                         self.worker_capacities[wid] -= 1
                         assert (self.worker_capacities[wid] >= 0, "Invalid capacity count")
-
 
     def kill_workers(self, identity_tuples):
 
@@ -224,13 +229,25 @@ class WorkerPool(object):
             for id_tup in identity_tuples:
                 w_type, num_kill = id_tup
 
+                print("[KILL] Worker_Type: {}".format(w_type))
+                print("[KILL] Num_to_Kill: {}".format(num_kill))
+
                 killed_workers = 0
 
+                # pri_queue = PriorityQueue()
+
                 # Kill num_kill distinct worker ids
+                print("Eligible killable workers: {}".format(self.task_to_worker_sets[w_type]))
+
+                print(len(self.task_to_worker_sets[w_type].copy()))
+
                 for wid in self.task_to_worker_sets[w_type].copy():
+
+                    print("WORKER_ID FOR CONSIDERATION {}".format(wid))
+
                     # Pick worker that's waiting for work (if any).
                     if self.worker_capacities[wid] == 1 and killed_workers < num_kill:  # if waiting.
-                        # print("Killing bored workers!")
+                        print("Killing bored workers!")
                         self.worker_capacities[wid] = 0  # Set to zero.
                         self.dead_worker_set.add(wid)  # add to dead_pool.
 
@@ -242,9 +259,11 @@ class WorkerPool(object):
                         killed_workers += 1
 
                         # Now remove the worker_id from the task_to_worker set.
-                        self.task_to_worker_sets[w_type].remove(wid)
+                        # self.task_to_worker_sets[w_type].remove(wid)
 
                     elif killed_workers < num_kill:
+                        print("Killing busy worker!")
+                        print(wid)
                         # print("Have to kill dead busy workers!")
                         self.dead_worker_set.add(wid)  # add to dead_pool.
 
@@ -253,8 +272,16 @@ class WorkerPool(object):
                         pri_queue.put(PrioritizedItem(5, [wid.encode(), b"KILL"]))
                         killed_workers += 1
 
+                        # self.task_to_worker_sets[w_type].remove(wid)
+
+                    else:
+                        print("Oops, wound up in here. ")
+                        break
+
                         # Now remove the worker_id from the task_to_worker set.
-                        self.task_to_worker_sets[w_type].remove(wid)
+                        # self.task_to_worker_sets[w_type].remove(wid)
+                    print(killed_workers)
+                    print(pri_queue.qsize())
 
 
             # print(">>> FINISHED WORKER_KILL PHASE :))))")
@@ -273,15 +300,18 @@ if __name__ == "__main__":
 
     # # TODO. Make this line unnecessary.
     # worker_pool.create_worker('B')
-    # worker_pool.create_worker('B')
     # worker_pool.create_worker('A')
+    # worker_pool.create_worker('B')
     # worker_pool.create_worker('A')
     #
     # print(worker_pool.task_to_worker_sets)
     # worker_pool.kill_workers([('A', 2)])
+    # kill_list = [('A', 2)]
+
+
+
     # print(worker_pool.task_to_worker_sets)
     #
-    # exit()
 
     # worker_pool.create_worker('A')
 
@@ -302,7 +332,7 @@ if __name__ == "__main__":
 
         # print("Getting new result")
         # Poll and get worker_id and result
-        # TODO: Check to see if worker_msg or client_msg in poll (don't do the noblock here.
+        # TODO: Check to see if worker_msg or client_msg in poll (don't do the noblock here).
         result = context.poller.poll()
 
         worker_msg = None
@@ -327,18 +357,24 @@ if __name__ == "__main__":
 
         # TODO: Add back.
         # SCHEDULER: Get two lists of tuples containing (worker_type, # workers to create/kill).
+
         alive_list, kill_list = scheduler.naive_scheduler(worker_pool.task_queues,
                                                           worker_pool.task_to_worker_sets, max_workers=PARALLELISM)
 
-        print("Alive: {}".format(alive_list))
+        print("Create: {}".format(alive_list))
         print("Kill: {}".format(kill_list))
 
+        # TODO: Why isn't the client driving correctly?
         # First we want to kill all of the unnecessary containers.
         if kill_list is not None:
             print("Processing KILL list...")
             worker_pool.kill_workers(kill_list)
+            print("Dead workers: {}".format(worker_pool.dead_worker_set))
 
-        # Next we want to bring all of the new containers to life.
+        # kill_list = []
+
+        #
+        # # # Next we want to bring all of the new containers to life.
         if alive_list is not None:
             print("Processing ALIVE list...")
             for alive_tup in alive_list:

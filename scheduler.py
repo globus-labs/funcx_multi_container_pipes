@@ -21,12 +21,15 @@ def naive_scheduler(task_queues, task_to_worker_sets, max_workers):
 
     for worker_type in task_queues:
         q_len = task_queues[worker_type].qsize()
+
+        print("Worker Type: {}, Q_size: {}".format(worker_type, q_len))
+
         # Really just using this loop to sum the total size of all task queues.
         total_tasks += q_len
 
         # Always leave one container in case of empty queue.
         if q_len == 0:
-            kill_count = len(task_to_worker_sets[worker_type])-1  # TODO: Clear out the wid in task_to_worker_sets
+            kill_count = len(task_to_worker_sets[worker_type])-1
             kill_list.append((worker_type, kill_count))
             kill_set.add(worker_type)
 
