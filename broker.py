@@ -12,10 +12,7 @@ from typing import Any
 from queue import PriorityQueue
 from dataclasses import dataclass, field
 
-# TODO
-# TODO 1: Why are we losing work when the client drives?
-# TODO 3: Ensure we can still mount to containers ('singularity run...').
-# TODO 4: Figure out how to separate container_reuse and no_reuse mode.
+# TODO 3: Ensure we can still mount to containers ('singularity run...') with fixes.
 # TODO 7: Cleanups (including logging!) .
 # TODO 8: Docs.
 # TODO 9: FIFO Queue for workers requesting jobs.
@@ -65,7 +62,7 @@ class Worker(object):
         self.worker_type = worker_type
 
     def launch(self):
-        # TODO: Actually bring the container bits back to life.
+        # TODO: Actually bring the container bits back to life on merge (post-fixing
         print("Launching new worker of container_mode: {}".format(self.container_mode))
 
         if self.container_mode is None:
